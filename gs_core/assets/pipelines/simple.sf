@@ -1,0 +1,71 @@
+// simple.sf
+
+pipeline { 
+
+    raster { 
+        primitive: TRIANGLES
+        index_buffer_element_size: UINT32
+    },
+
+    depth {
+        func: LESS 
+    },
+
+    blend {
+    },
+
+    stencil {
+    },
+
+    shader { 
+
+        vertex { 
+
+            attributes { 
+
+                mesh {
+                    POSITION : a_position
+                    TEXCOORD : a_uv
+                    COLOR    : a_color
+                } 
+            }, 
+
+            uniforms {
+                mat4 u_mvp;
+            },
+
+            out {
+                vec2 uv;
+                vec3 position;
+            },
+
+            code { 
+                void main() {
+                    gl_Position = u_mvp * vec4(a_position, 1.0);
+                    uv = vec2(a_uv.x, -a_uv.y);
+                    position = a_position;
+                }
+            }
+        },
+
+        fragment { 
+
+            uniforms {
+                sampler2D u_cmptex;
+                sampler2D u_tex;
+            }, 
+            
+            out {
+                vec4 frag_color;            
+            },
+
+            code {
+                void main() {
+                    vec4 cmp = texture(u_cmptex, uv);
+                    vec4 tc = texture(u_tex, uv);
+                    frag_color = mix(cmp, tc, tc.r);
+                }
+            }
+        } 
+    } 
+}
