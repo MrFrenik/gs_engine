@@ -55,8 +55,9 @@
 #define GS_PHYSICS_IMPL
 #include <gs/util/gs_physics.h> 
 
-#define GS_MICROUI_IMPL
-#include "external/microui/gs_microui.h"
+#define GS_IMGUI_IMPL
+#include "cimgui/cimgui.h"
+#include "external/imgui/gs_imgui.h"
 
 #define GS_OBJECT_IMPL
 #include "gs_object.h"
@@ -81,7 +82,6 @@
 
 // Source files
 #include "../source/reflection/gs_generated.c"
-#include "cimgui/cimgui.h"
 #include "gs_component.c"
 
 

@@ -81,7 +81,7 @@ GS_API_DECL void gs_editor_update()
     gs_command_buffer_t* cb = &core->cb;
     gs_immediate_draw_t* gsi = &core->gsi; 
     gs_entity_manager_t* em = &core->entities; 
-    gs_mu_ctx* gmu = &core->gmu;
+    gs_imgui_t* imgui = & core->imgui;
 
     // Get necessary platform metrics
     const gs_vec2 fb = gs_platform_framebuffer_sizev(gs_platform_main_window());
@@ -89,6 +89,9 @@ GS_API_DECL void gs_editor_update()
 
     // Process input (closing window) 
     if (gs_platform_key_pressed(GS_KEYCODE_ESC)) gs_engine_quit(); 
+
+    // New frame for imgui
+    gs_imgui_new_frame(&app->core->imgui);
 
     // Update entity manager
     gs_entities_update(em); 
@@ -104,6 +107,22 @@ GS_API_DECL void gs_editor_update()
 
     // Submit immediate draw render pass
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255));
+
+    // Do some imgui stuff
+    igBegin("Test", NULL, 0x00);
+    {
+        igText("Test");
+    }
+    igEnd();
+
+    igBegin("Test2", NULL, 0x00);
+    {
+        igText("Test2");
+    }
+    igEnd();
+
+    // Imgui render
+    gs_imgui_render(&app->core->imgui, cb);
 
     // Submit command buffer for rendering
     gs_graphics_submit_command_buffer(cb); 

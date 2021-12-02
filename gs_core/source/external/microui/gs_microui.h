@@ -10,13 +10,13 @@
 
 /*== micrui renderer =========================================================*/
 
-typedef struct gs_mu_ctx 
+typedef struct gs_mu_ctx_t 
 {
     mu_Context mu;
     gs_immediate_draw_t gsi;
     gs_handle(gs_graphics_texture_t) atlas_tex;
 
-} gs_mu_ctx;
+} gs_mu_ctx_t;
 
 static int __text_width(mu_Font font, const char* text, int len) {
     int res = 0;
@@ -26,7 +26,7 @@ static int __text_width(mu_Font font, const char* text, int len) {
     return res;
 }
 
-static gs_mu_ctx* MU;
+static gs_mu_ctx_t* MU;
 void mu_char_callback(uint32_t handle, char codepoint)
 {
     // This isn't checking anything.
@@ -38,23 +38,23 @@ static int __text_height(mu_Font font) {
     return 18;
 }
 
-GS_API_DECL gs_mu_ctx gs_mu_new(); 
-GS_API_DECL void gs_mu_init(gs_mu_ctx* ctx);
-GS_API_DECL void gs_mu_new_frame(gs_mu_ctx* ctx);
-GS_API_DECL void gs_mu_render(gs_mu_ctx* ctx, gs_command_buffer_t* cb);
+GS_API_DECL gs_mu_ctx_t gs_mu_new(); 
+GS_API_DECL void gs_mu_init(gs_mu_ctx_t* ctx);
+GS_API_DECL void gs_mu_new_frame(gs_mu_ctx_t* ctx);
+GS_API_DECL void gs_mu_render(gs_mu_ctx_t* ctx, gs_command_buffer_t* cb);
 
 #ifdef GS_MICROUI_IMPL 
 
 #include "microui.c"
 
-GS_API_DECL gs_mu_ctx gs_mu_new()
+GS_API_DECL gs_mu_ctx_t gs_mu_new()
 {
-    gs_mu_ctx ctx = {0};
+    gs_mu_ctx_t ctx = {0};
     gs_mu_init(&ctx);
     return ctx;
 }
 
-GS_API_DECL void gs_mu_init(gs_mu_ctx * ctx)
+GS_API_DECL void gs_mu_init(gs_mu_ctx_t * ctx)
 { 
     ctx->gsi = gs_immediate_draw_new();
     mu_init(&ctx->mu);
@@ -87,7 +87,7 @@ GS_API_DECL void gs_mu_init(gs_mu_ctx * ctx)
     #endif
 }
 
-GS_API_DECL void gs_mu_new_frame(gs_mu_ctx* ctx)
+GS_API_DECL void gs_mu_new_frame(gs_mu_ctx_t* ctx)
 {
     gs_vec2 mouse_pos = gs_platform_mouse_positionv();
     gs_platform_event_t evt = gs_default_val();
@@ -208,7 +208,7 @@ GS_API_PRIVATE void __push_quad(gs_immediate_draw_t* gsi, const mu_Rect* dst, co
     gsi_end(gsi); 
 }
 
-GS_API_DECL void gs_mu_render(gs_mu_ctx* ctx,gs_command_buffer_t* cb)
+GS_API_DECL void gs_mu_render(gs_mu_ctx_t* ctx,gs_command_buffer_t* cb)
 { 
     gsi_texture(&ctx->gsi,ctx->atlas_tex);
     gsi_camera2D(&ctx->gsi);

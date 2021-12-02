@@ -47,7 +47,7 @@ typedef struct gs_core_t
 	gs_entity_manager_t	entities;
 	gs_asset_manager_t 	assets;
 	gs_meta_t 			meta;
-    gs_mu_ctx           gmu;
+    gs_imgui_t          imgui;
 } gs_core_t;
 
 GS_API_DECL gs_core_t* gs_core_new();
@@ -64,9 +64,9 @@ GS_API_DECL gs_core_t* gs_core_new()
     core->cb = gs_command_buffer_new();
     core->gsi = gs_immediate_draw_new();
 
-    //=== [ GSMUI ] ===// 
-
-    core->gmu = gs_mu_new(); 
+    //=== [ ImGui ] ===// 
+    //
+    core->imgui = gs_imgui_new(gs_platform_main_window(), false);
 
 	//=== [ Meta ] ====//
 	
