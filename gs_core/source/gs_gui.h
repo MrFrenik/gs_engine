@@ -207,6 +207,7 @@ typedef struct gs_gui_context_t
 	// Callbacks
     int32_t (*text_width)(gs_asset_font_t* font, const char* text, int32_t len);
     int32_t (*text_height)(gs_asset_font_t* font, const char* text, int32_t len);
+    int32_t (*font_height)(gs_asset_font_t* font);
     gs_vec2 (*text_dimensions)(gs_asset_font_t* font, const char* text, int32_t len);
 	void (*draw_frame)(gs_gui_context_t *ctx, gs_gui_rect_t rect, int32_t colorid);
 
@@ -318,7 +319,7 @@ GS_API_DECL void gs_gui_update_control(gs_gui_context_t *ctx, gs_gui_id id, gs_g
 #define gs_gui_begin_window(_CTX, _TITLE, _RECT)    gs_gui_begin_window_ex((_CTX), (_TITLE), (_RECT), 0)
 #define gs_gui_begin_panel(_CTX, _NAME)			    gs_gui_begin_panel_ex((_CTX), (_NAME), 0)
 
-GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text);
+GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text, int32_t text_wrap);
 GS_API_DECL void gs_gui_label(gs_gui_context_t *ctx, const char *text);
 GS_API_DECL int32_t gs_gui_button_ex(gs_gui_context_t *ctx, const char *label, int32_t icon, int32_t opt);
 GS_API_DECL int32_t gs_gui_checkbox(gs_gui_context_t *ctx, const char *label, int32_t *state);
@@ -513,19 +514,26 @@ static void gs_gui_pop_container(gs_gui_context_t *ctx)
 
 static int32_t gs_gui_text_width(gs_asset_font_t* font, const char* text, int32_t len) 
 { 
-    gs_vec2 td = gs_asset_font_get_text_dimensions(font, text, len);
+    gs_vec2 td = gs_asset_font_text_dimensions(font, text, len);
     return (int32_t)td.x;
 }
 
 static int32_t gs_gui_text_height(gs_asset_font_t* font, const char* text, int32_t len) 
 {
-    gs_vec2 td = gs_asset_font_get_text_dimensions(font, text, len);
+    return (int32_t)gs_asset_font_max_height(font);
+    gs_vec2 td = gs_asset_font_text_dimensions(font, text, len);
     return (int32_t)td.y;
 } 
 
+// Grabs max height for a given font
+static int32_t gs_gui_font_height(gs_asset_font_t* font)
+{
+    return (int32_t)gs_asset_font_max_height(font);
+}
+
 static gs_vec2 gs_gui_text_dimensions(gs_asset_font_t* font, const char* text, int32_t len) 
 {
-    gs_vec2 td = gs_asset_font_get_text_dimensions(font, text, len);
+    gs_vec2 td = gs_asset_font_text_dimensions(font, text, len);
     return td;
 } 
 
@@ -534,6 +542,7 @@ GS_API_DECL void gs_gui_init(gs_gui_context_t *ctx, uint32_t window_hndl)
 	memset(ctx, 0, sizeof(*ctx));
     ctx->text_height = gs_gui_text_height;
     ctx->text_width = gs_gui_text_width;
+    ctx->font_height = gs_gui_font_height;
     ctx->text_dimensions = gs_gui_text_dimensions;
 	ctx->draw_frame = gs_gui_draw_frame; 
     ctx->gsi = gs_immediate_draw_new(window_hndl); 
@@ -1307,13 +1316,14 @@ GS_API_DECL void gs_gui_update_control(gs_gui_context_t *ctx, gs_gui_id id, gs_g
 	}
 } 
 
-GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text) 
+GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text, int32_t wrap)
 {
 	const char *start, *end, *p = text;
 	int32_t width = -1;
 	gs_asset_font_t* font = ctx->style->font;
 	gs_color_t color = ctx->style->colors[GS_GUI_COLOR_TEXT];
-    int32_t th = ctx->text_height(font, text, -1);
+    // int32_t th = ctx->text_height(font, text, -1);
+    int32_t th = ctx->font_height(font);
 	gs_gui_layout_begin_column(ctx);
 	gs_gui_layout_row(ctx, 1, &width, th);
 
@@ -1330,13 +1340,13 @@ GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text)
                 p++; 
             }
 
-			w += ctx->text_width(font, word, p - word);
+            if (wrap) w += ctx->text_width(font, word, p - word);
 			if (w > r.w && end != start) 
             { 
                 break; 
             }
 
-			w += ctx->text_width(font, p, 1);
+			if (wrap) w += ctx->text_width(font, p, 1);
 			end = p++;
 
 		} while (*end && *end != '\n');
@@ -1347,7 +1357,7 @@ GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text)
 	} while (*end);
 
 	gs_gui_layout_end_column(ctx);
-} 
+}
 
 GS_API_DECL void gs_gui_label(gs_gui_context_t *ctx, const char *text) 
 {
@@ -1450,17 +1460,19 @@ GS_API_DECL int32_t gs_gui_textbox_raw(gs_gui_context_t *ctx, char *buf, int32_t
 		gs_color_t color = ctx->style->colors[GS_GUI_COLOR_TEXT];
 		gs_asset_font_t* font = ctx->style->font; 
 		int32_t textw = ctx->text_width(font, buf, -1);
-		int32_t texth = ctx->text_height(font, buf, -1);
+		// int32_t texth = ctx->text_height(font, buf, -1);
+        int32_t texth = ctx->font_height(font);
 		int32_t ofx = r.w - ctx->style->padding - textw - 1;
 		int32_t textx = r.x + gs_min(ofx, ctx->style->padding);
 		int32_t texty = r.y + (r.h - texth) / 2;
-		int32_t cary = r.y + (r.h - texth) / 2; 
+		int32_t cary = r.y; 
 		gs_gui_draw_box(ctx, gs_gui_rect(textx, texty, textw, texth), GS_COLOR_RED); 
 		gs_gui_push_clip_rect(ctx, r); 
 
         // Draw text
-		gs_gui_draw_text(ctx, font, buf, -1, gs_v2(textx, texty), color);
-		gs_gui_draw_rect(ctx, gs_gui_rect(textx + textw + 1, cary, 1, texth), color); 
+		gs_gui_draw_text(ctx, font, buf, -1, gs_v2(textx, texty), color); 
+        // Draw carret (want it to blink somehow)
+		gs_gui_draw_rect(ctx, gs_gui_rect(textx + textw + 1, cary, 1, r.y), color); 
 
 		gs_gui_pop_clip_rect(ctx);
 	} 

@@ -327,6 +327,50 @@ GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_
     gs_hash_table_insert(editor->views, gs_hash_str64(view->name), view);
 }
 
+static void write_log(char* logbuf, const char* text, bool* updated) {
+    /* FIXME: THIS IS UNSAFE! */
+    if (logbuf[0]) {
+        strcat(logbuf, "\n");
+    }
+    strcat(logbuf, text);
+    *updated = 1;
+}
+
+static void log_window(gs_gui_context_t* ctx) {
+
+    static bool logbuf_updated = false;
+    static char logbuf[64000] = {0};
+
+    if (gs_gui_begin_window(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200))) 
+    { 
+        gs_gui_layout_row(ctx, 1, (int[]) { -1 }, -28);
+        gs_gui_begin_panel(ctx, "Panel"); 
+        gs_gui_container_t* panel  = gs_gui_get_current_container(ctx);
+        gs_gui_layout_row(ctx, 1, (int[]) { -1 }, -1);
+        gs_gui_text(ctx, logbuf, 0);
+        gs_gui_end_panel(ctx);
+        if (logbuf_updated) {
+            panel->scroll.y = panel->content_size.y;
+            logbuf_updated = 0;
+        }
+
+        /* input textbox + submit button */
+        static char buf[1024];
+        int submitted = 0;
+        gs_gui_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
+        if (gs_gui_textbox(ctx, buf, sizeof(buf)) & GS_GUI_RES_SUBMIT) {
+            gs_gui_set_focus(ctx, ctx->last_id);
+            submitted = 1;
+        }
+        if (gs_gui_button(ctx, "Submit")) { submitted = 1; }
+        if (submitted) {
+            write_log(logbuf, buf, &logbuf_updated);
+            buf[0] = '\0';
+        }
+        gs_gui_end_window(ctx);
+    }
+}
+
 GS_API_DECL void gs_editor_update()
 {
     // Cache app/core pointers
@@ -370,7 +414,7 @@ GS_API_DECL void gs_editor_update()
 // Need to speed up the hash table immensely now...
 
 #define DO_IMGUI 0
-#define WIN_CNT 10
+#define WIN_CNT 1
 
 /*
 #if DO_IMGUI
@@ -535,6 +579,7 @@ GS_API_DECL void gs_editor_update()
 		gs_gui_rect_t r = gs_gui_rect(rx * 800.f, ry * 400.f, rw * 100.f, rh * 100.f);
 		gs_snprintfc(TMP, 256, "Test_%zu", i);
 
+        #define STATIC_WIN_DIMS 1
         #if STATIC_WIN_DIMS
             r.x = 100.f;
             r.y = 100.f;
@@ -561,6 +606,8 @@ GS_API_DECL void gs_editor_update()
 		}
 	}
 
+    log_window(gsgui);
+
     gs_gui_end(gsgui, cb);
     gs_gui_render(gsgui, cb);
 
@@ -571,6 +618,7 @@ GS_API_DECL void gs_editor_update()
     // Submit command buffer for rendering
     gs_graphics_submit_command_buffer(cb); 
 }
+
 
 GS_API_DECL void gs_editor_shutdown()
 {
