@@ -1,3 +1,4 @@
 *.exe 
 gs_editor/bin/
 bin/
+.vs/
