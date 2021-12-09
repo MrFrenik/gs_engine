@@ -48,6 +48,8 @@ typedef struct gs_core_t
 	gs_asset_manager_t 	assets;
 	gs_meta_t 			meta;
     gs_imgui_t          imgui;
+    gs_gui_context_t    gsgui;
+    gs_mu_ctx_t         gsmui;
 } gs_core_t;
 
 GS_API_DECL gs_core_t* gs_core_new();
@@ -62,22 +64,29 @@ GS_API_DECL gs_core_t* gs_core_new()
     //=== [ Structures ] ===// 
 	
     core->cb = gs_command_buffer_new();
-    core->gsi = gs_immediate_draw_new();
-
-    //=== [ ImGui ] ===// 
-    //
-    core->imgui = gs_imgui_new(gs_platform_main_window(), false);
+    core->gsi = gs_immediate_draw_new(gs_platform_main_window());
 
 	//=== [ Meta ] ====//
 	
 	core->meta = gs_meta_new();
-	gs_meta_set_instance(&core->meta);
+	gs_meta_set_instance(&core->meta); 
 
 	// Register gunslinger meta information
 	gs_meta_register_gs(&core->meta); 
 
 	// Register all generated meta information
 	gs_meta_register_generated(&core->meta);
+
+    //=== [ ImGui ] ===// 
+    
+    gs_imgui_context_new(&core->imgui, gs_platform_main_window(), false); 
+
+    //=== [ GUI ] ===// 
+
+    gs_gui_init(&core->gsgui, gs_platform_main_window());
+
+    //=== [ MicroUI ] ===// 
+    core->gsmui = gs_mu_new(gs_platform_main_window()); 
 
 	//=== [ Assets ] ====//
 	
@@ -101,8 +110,7 @@ GS_API_DECL gs_core_t* gs_core_new()
 GS_API_DECL void gs_core_delete(gs_core_t* core)
 {
     gs_immediate_draw_free(&core->gsi);
-    gs_command_buffer_free(&core->cb);
-    
+    gs_command_buffer_free(&core->cb); 
 }
 
 

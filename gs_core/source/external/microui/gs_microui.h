@@ -14,8 +14,7 @@ typedef struct gs_mu_ctx_t
 {
     mu_Context mu;
     gs_immediate_draw_t gsi;
-    gs_handle(gs_graphics_texture_t) atlas_tex;
-
+    gs_handle(gs_graphics_texture_t) atlas_tex; 
 } gs_mu_ctx_t;
 
 static int __text_width(mu_Font font, const char* text, int len) {
@@ -38,8 +37,8 @@ static int __text_height(mu_Font font) {
     return 18;
 }
 
-GS_API_DECL gs_mu_ctx_t gs_mu_new(); 
-GS_API_DECL void gs_mu_init(gs_mu_ctx_t* ctx);
+GS_API_DECL gs_mu_ctx_t gs_mu_new(uint32_t window_hndl);
+GS_API_DECL void gs_mu_init(gs_mu_ctx_t* ctx, uint32 window_hndl);
 GS_API_DECL void gs_mu_new_frame(gs_mu_ctx_t* ctx);
 GS_API_DECL void gs_mu_render(gs_mu_ctx_t* ctx, gs_command_buffer_t* cb);
 
@@ -47,16 +46,16 @@ GS_API_DECL void gs_mu_render(gs_mu_ctx_t* ctx, gs_command_buffer_t* cb);
 
 #include "microui.c"
 
-GS_API_DECL gs_mu_ctx_t gs_mu_new()
+GS_API_DECL gs_mu_ctx_t gs_mu_new(uint32_t window_hndl)
 {
     gs_mu_ctx_t ctx = {0};
-    gs_mu_init(&ctx);
+    gs_mu_init(&ctx, window_hndl);
     return ctx;
 }
 
-GS_API_DECL void gs_mu_init(gs_mu_ctx_t * ctx)
+GS_API_DECL void gs_mu_init(gs_mu_ctx_t* ctx, uint32_t window_hndl)
 { 
-    ctx->gsi = gs_immediate_draw_new();
+    ctx->gsi = gs_immediate_draw_new(window_hndl);
     mu_init(&ctx->mu);
     ctx->mu.text_width = __text_width;
     ctx->mu.text_height = __text_height;
@@ -83,12 +82,14 @@ GS_API_DECL void gs_mu_init(gs_mu_ctx_t * ctx)
 
     MU = ctx; 
     #ifndef GS_PLATFORM_WEB
-        gs_platform_set_character_callback( gs_platform_main_window() , mu_char_callback);
+        // gs_platform_set_character_callback(window_hndl , mu_char_callback);
     #endif
 }
 
 GS_API_DECL void gs_mu_new_frame(gs_mu_ctx_t* ctx)
 {
+    mu_begin(&ctx->mu);
+
     gs_vec2 mouse_pos = gs_platform_mouse_positionv();
     gs_platform_event_t evt = gs_default_val();
         while (gs_platform_poll_events(&evt, false))
@@ -210,6 +211,7 @@ GS_API_PRIVATE void __push_quad(gs_immediate_draw_t* gsi, const mu_Rect* dst, co
 
 GS_API_DECL void gs_mu_render(gs_mu_ctx_t* ctx,gs_command_buffer_t* cb)
 { 
+    mu_end(&ctx->mu);
     gsi_texture(&ctx->gsi,ctx->atlas_tex);
     gsi_camera2D(&ctx->gsi);
     mu_Command *cmd = NULL;

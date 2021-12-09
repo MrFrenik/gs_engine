@@ -91,6 +91,9 @@ GS_API_PRIVATE gs_result _gs_obj_deserialize_internal(uint64_t id, gs_byte_buffe
 #define on_destroy(...) gs_empty_instruction() 
 #define cast(A, B) ((B*)(A)) 
 
+// Used for ignoring entire file for reflection generation
+#define GS_REFL_IGNORE_FILE gs_empty_instruction()
+
 // Reflection defines
 #define vtable(...) /* __VA_ARGS__ */
 #define ignore(...) gs_empty_instruction() 

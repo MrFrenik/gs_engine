@@ -45,8 +45,8 @@ rem Run Reflection for gs_editor files
 
 rem Compile Release
 rem cl /MP /FS /Ox /W0 /Fe%name%.exe %src_main% %inc% %core_inc% ^
-rem /EHsc /link /SUBSYSTEM:CONSOLE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:LIBCMT ^
-rem %os_libs%
+rem /EHsc /link /SUBSYSTEM:CONSOLE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:libcmt.lib ^
+rem /NODEFAULTLIB:libcmtd.lib /NODEFAULTLIB:msvcrtd.lib %core_libs_dbg% %os_libs%
 
 rem Compile Debug
 cl /w /MP -Zi /DEBUG:FULL /Fe%name%.exe %src_main% %inc% %core_inc% ^

@@ -695,7 +695,7 @@ void parse_file(reflection_data_t* refl, const char* path)
 	gs_println("generating reflection: %s", path);
 
     /*
-    if (gs_string_compare_equal(path, "../source/app.h"))
+    if (gs_string_compare_equal(path, "../../gs_core//source/gs_gui.h"))
 	{
 		return;
 	}
@@ -712,7 +712,11 @@ void parse_file(reflection_data_t* refl, const char* path)
 			{
 				case GS_TOKEN_IDENTIFIER:
 				{
-					if (gs_token_compare_text(&token, "introspect"))
+                    if (gs_token_compare_text(&token, "GS_REFL_IGNORE_FILE"))
+                    {
+                        goto lex_end;
+                    }
+                    else if (gs_token_compare_text(&token, "introspect"))
 					{
 						// Move to ending parens for introspect tag (can parse tags here)
 						gs_lexer_find_next_token_type(&lex, GS_TOKEN_RPAREN);
@@ -743,6 +747,7 @@ void parse_file(reflection_data_t* refl, const char* path)
 				} break;
 			}
 		}
+    lex_end:
 		gs_free(contents);
 	}
 }

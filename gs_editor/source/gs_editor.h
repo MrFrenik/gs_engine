@@ -39,6 +39,129 @@
 #ifndef gs_editor_H
 #define gs_editor_H 
 
+// Main menu
+// Dockspace
+// Editor views
+// Load/Reload/Unload application
+// Sandbox for play
+// Core update...?
+
+/*
+    From Enjon: 
+
+    // Grab the context from core for your window
+    GUIContext* ctx = window->GetGUIContext( );
+
+    // Register main menu option
+    ctx->RegisterMenuOption( "View", mName, [ & ] ( )
+    {
+        ImGui::MenuItem( Utils::format( "%s##options%zu", mName.c_str(), (u32)(usize)this ).c_str( ), NULL, &mViewEnabled );
+    });
+
+    // Register imgui window 
+    ctx->RegisterWindow( mName, [ & ] ( )
+    {
+        // Docking windows
+        if ( ImGui::BeginDock( GetViewName().c_str(), &mViewEnabled, GetViewFlags() ) )
+        {
+            Update( );
+        }
+        ImGui::EndDock( ); 
+    }); 
+
+    // Register docking layout with context
+    guiContext->RegisterDockingLayout( GUIDockingLayout( "Inspector", "World Outliner", GUIDockSlotType::Slot_Top, 0.50f ) ); 
+
+    // Example for simple view 
+
+    typedef void (* gs_imgui_window_func)(gs_imgui_ctx_t* ctx, void* user_data); 
+
+    typedef struct gs_editor_view_data_t
+    {
+        const char* category;
+        const char* name;
+        uint32_t flags;
+        bool32 enabled;
+        gs_imgui_window_func func;
+        uint32_t window_handle;
+    } gs_editor_view_data_t;
+
+    typedef gs_editor_view_data_t gs_editor_view_desc_t;
+
+    typedef struct gs_editor_t
+    {
+        gs_hash_table(uint64_t, gs_editor_view_data_t*) view_data;
+    } gs_editor_t;
+
+    GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_t* desc)
+    { 
+        gs_core_t* core = &editor->core;
+        gs_imgui_t* gimgui = &core->imgui; 
+        gs_imgui_ctx_t* ctx = gs_imgui_get_context(gimgui, desc->window_handle);
+        gs_assert(ctx);
+
+        // Construct view data, store in editor
+        gs_editor_view_data_t view = gs_malloc_init(gs_editor_view_data_t);
+        view->name = desc->name; 
+        view->category = desc->category;
+        view->enabled = desc->enabled;
+        view->flags = desc->flags;
+        view->func = desc->func;
+        view->window_handle = desc->window_handle;
+
+        // Want data for this to be accessible for the view itself...
+        gs_imgui_ctx_register_window(ctx, view->name, gs_editor_view_func, view);
+        gs_imgui_ctx_register_main_menu_option(ctx, view->category, view->name, gs_editor_menu_option_func, view); 
+
+        // Insert data into editor
+        gs_hash_table_insert(gs_hash_str64(view_data->name), view_data);
+    }
+
+    // Option
+    GS_API_DECL void gs_editor_menu_option_func(gs_imgui_ctx_t* ctx, void* data)
+    {
+        // Grab view data
+        gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+        gs_assert(scene);
+
+        // Construct menu option name
+        gs_snprintfc(OPTION, 256, "%s##options%zu", view->name, (uint32_t)(size_t)view); 
+
+        // Menu option
+        igMenuItem(OPTION, NULL, &view->enabled);
+    }
+
+    GS_API_DECL void gs_editor_view_func(gs_imgui_ctx_t* ctx, void* data)
+    {
+        // Grab view data
+        gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+        gs_assert(view);
+
+        if (igBegin(view->name, &view->enabled, view->flags))
+        {
+            if (view->func)
+            {
+                view->func(ctx, view);
+            }
+            igEnd();
+        }
+    }
+
+    // 
+*/
+
+typedef struct gs_editor_view_data_t
+{
+    const char* category;
+    const char* name;
+    uint32_t flags;
+    bool32 enabled;
+    gs_imgui_func func;
+    uint32_t window_handle;
+} gs_editor_view_data_t;
+
+typedef gs_editor_view_data_t gs_editor_view_desc_t;
+
 // App struct declaration 
 typedef struct gs_editor_t
 {
@@ -47,18 +170,44 @@ typedef struct gs_editor_t
 
     // Your app data here...
     gs_asset_handle_t tex;
-
+    gs_hash_table(uint64_t, gs_editor_view_data_t*) views; 
+    gs_mt_rand_t rand; 
 } gs_editor_t; 
 
 // Main application interface functions
 GS_API_DECL gs_app_desc_t gs_editor_main(int32_t argc, char** argv);
+GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_t* desc);
 GS_API_DECL void gs_editor_init();
 GS_API_DECL void gs_editor_update();
 GS_API_DECL void gs_editor_shutdown(); 
+GS_API_DECL void gs_editor_scene_view(void* data);
+GS_API_DECL void gs_editor_world_outliner_view(void* data);
+GS_API_DECL void gs_editor_asset_browser_view(void* data);
 
 // == [ Appplication Implementation ] == // 
 
 #ifdef gs_editor_IMPL 
+
+GS_API_DECL void gs_editor_world_outliner_view(void* data)
+{
+    gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+    gs_snprintfc(TMP, 256, "Enabled: %s", view->enabled ? "true" : "false");
+    igText("World Outliner: %s", TMP);
+}
+
+GS_API_DECL void gs_editor_asset_browser_view(void* data)
+{
+    gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+    gs_snprintfc(TMP, 256, "Enabled: %s", view->enabled ? "true" : "false");
+    igText("Asset Browser: %s", TMP);
+}
+
+GS_API_DECL void gs_editor_scene_view(void* data)
+{
+    gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+    gs_snprintfc(TMP, 256, "Enabled: %s", view->enabled ? "true" : "false");
+    igText("Scene View: %s", TMP);
+}
 
 GS_API_DECL void gs_editor_init()
 {
@@ -70,8 +219,113 @@ GS_API_DECL void gs_editor_init()
     gs_editor_meta_register_generated(&app->core->meta);
 
     // Import texture into asset manager
-    app->tex = gs_assets_import(&app->core->assets, "../../gs_core/assets/textures/logo.png", NULL, false);
+    app->tex = gs_assets_import(&app->core->assets, "../../gs_core/assets/textures/logo.png", NULL, false); 
+
+    // Create scene view
+    gs_editor_view_create(app, &(gs_editor_view_desc_t){
+        .category = "Views", 
+        .name = "Scene", 
+        .flags = 0x00,
+        .enabled = true,
+        .func = gs_editor_scene_view,
+        .window_handle = gs_platform_main_window()
+    });
+
+    // Create world outliner view
+    gs_editor_view_create(app, &(gs_editor_view_desc_t){
+        .category = "Views", 
+        .name = "World Outliner", 
+        .flags = 0x00,
+        .enabled = true,
+        .func = gs_editor_world_outliner_view,
+        .window_handle = gs_platform_main_window()
+    });
+
+    // Create asset browser view
+    gs_editor_view_create(app, &(gs_editor_view_desc_t){
+        .category = "Views", 
+        .name = "Asset Browser", 
+        .flags = 0x00,
+        .enabled = true,
+        .func = gs_editor_asset_browser_view,
+        .window_handle = gs_platform_main_window()
+    });
+
+    app->rand = gs_rand_seed((uint64_t)time(NULL));
 } 
+
+GS_API_DECL void gs_editor_view_func(void* data)
+{
+    // Grab view data
+    gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+    gs_assert(view);
+
+    /*
+    struct ImGuiWindowClass
+    {
+        ImGuiID             ClassId;                    // User data. 0 = Default class (unclassed). Windows of different classes cannot be docked with each others.
+        ImGuiID             ParentViewportId;           // Hint for the platform backend. -1: use default. 0: request platform backend to not parent the platform. != 0: request platform backend to create a parent<>child relationship between the platform windows. Not conforming backends are free to e.g. parent every viewport to the main viewport or not.
+        ImGuiViewportFlags  ViewportFlagsOverrideSet;   // Viewport flags to set when a window of this class owns a viewport. This allows you to enforce OS decoration or task bar icon, override the defaults on a per-window basis.
+        ImGuiViewportFlags  ViewportFlagsOverrideClear; // Viewport flags to clear when a window of this class owns a viewport. This allows you to enforce OS decoration or task bar icon, override the defaults on a per-window basis.
+        ImGuiTabItemFlags   TabItemFlagsOverrideSet;    // [EXPERIMENTAL] TabItem flags to set when a window of this class gets submitted into a dock node tab bar. May use with ImGuiTabItemFlags_Leading or ImGuiTabItemFlags_Trailing.
+        ImGuiDockNodeFlags  DockNodeFlagsOverrideSet;   // [EXPERIMENTAL] Dock node flags to set when a window of this class is hosted by a dock node (it doesn't have to be selected!)
+        bool                DockingAlwaysTabBar;        // Set to true to enforce single floating windows of this class always having their own docking node (equivalent of setting the global io.ConfigDockingAlwaysTabBar)
+        bool                DockingAllowUnclassed;      // Set to true to allow windows of this class to be docked/merged with an unclassed window. // FIXME-DOCK: Move to DockNodeFlags override?
+
+        ImGuiWindowClass() { memset(this, 0, sizeof(*this)); ParentViewportId = (ImGuiID)-1; DockingAllowUnclassed = true; }
+    };
+    */
+
+    if (view->enabled)
+    {
+        igBegin(view->name, &view->enabled, view->flags);
+        {
+            if (view->func) view->func(view);
+        }
+        igEnd();
+    }
+}
+
+GS_API_DECL void gs_editor_menu_func(void* data)
+{
+    gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
+
+    // Need all the categories here
+    igMenuItem_BoolPtr(view->name, NULL, &view->enabled, true);
+}
+
+GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_t* desc)
+{
+    gs_core_t* core = editor->core;
+    gs_imgui_t* gimgui = &core->imgui; 
+    gs_imgui_context_t* ctx = gs_imgui_get_context(gimgui, desc->window_handle);
+    gs_assert(ctx);
+
+    // Construct view data, store in editor
+    gs_editor_view_data_t* view = gs_malloc_init(gs_editor_view_data_t);
+    view->name = desc->name; 
+    view->category = desc->category;
+    view->enabled = desc->enabled;
+    view->flags = desc->flags;
+    view->func = desc->func;
+    view->window_handle = desc->window_handle; 
+
+    // Want data for this to be accessible for the view itself...
+    gs_imgui_register_window(ctx, &(gs_imgui_callback_desc_t){
+        .name = view->name,
+        .cb = gs_editor_view_func,
+        .user_data = view
+    });
+
+    gs_imgui_register_menu_item(ctx, "Views", &(gs_imgui_callback_desc_t){
+        .name = view->name,
+        .cb = gs_editor_menu_func,
+        .user_data = view
+    }); 
+
+    // Insert data into editor
+    gs_hash_table_insert(editor->views, gs_hash_str64(view->name), view);
+}
 
 GS_API_DECL void gs_editor_update()
 {
@@ -82,6 +336,9 @@ GS_API_DECL void gs_editor_update()
     gs_immediate_draw_t* gsi = &core->gsi; 
     gs_entity_manager_t* em = &core->entities; 
     gs_imgui_t* imgui = & core->imgui;
+    gs_imgui_context_t* gsimgui = gs_imgui_get_context(&app->core->imgui, gs_platform_main_window());
+    gs_gui_context_t* gsgui = &app->core->gsgui;
+    gs_mu_ctx_t* gsmui = &core->gsmui;
 
     // Get necessary platform metrics
     const gs_vec2 fb = gs_platform_framebuffer_sizev(gs_platform_main_window());
@@ -90,8 +347,10 @@ GS_API_DECL void gs_editor_update()
     // Process input (closing window) 
     if (gs_platform_key_pressed(GS_KEYCODE_ESC)) gs_engine_quit(); 
 
-    // New frame for imgui
-    gs_imgui_new_frame(&app->core->imgui);
+    gs_mu_new_frame(gsmui);
+
+    // gs_gui_new_frame(gsgui);
+    gs_gui_begin(gsgui);
 
     // Update entity manager
     gs_entities_update(em); 
@@ -108,21 +367,206 @@ GS_API_DECL void gs_editor_update()
     // Submit immediate draw render pass
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255));
 
-    // Do some imgui stuff
-    igBegin("Test", NULL, 0x00);
-    {
-        igText("Test");
-    }
-    igEnd();
+// Need to speed up the hash table immensely now...
 
-    igBegin("Test2", NULL, 0x00);
+#define DO_IMGUI 0
+#define WIN_CNT 10
+
+/*
+#if DO_IMGUI
+
+    // New frame for imgui
+    gs_imgui_new_frame(gsimgui);
+
+    // Want to make a dockspace...
+#ifdef DO_IMGUI_DOCK
+    static bool opt_fullscreen = true;
+    static bool opt_padding = false;
+    static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
+
+    // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
+    // because it would be confusing to have two docking targets within each others.
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    if (opt_fullscreen)
     {
-        igText("Test2");
+        const ImGuiViewport* viewport = igGetMainViewport();
+        igSetNextWindowPos(viewport->WorkPos, 0, (ImVec2){0.f, 0.f});
+        igSetNextWindowSize(viewport->WorkSize, 0);
+        igSetNextWindowViewport(viewport->ID);
+        igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 0.0f);
+        igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
     }
-    igEnd();
+    else
+    {
+        dockspace_flags &= ~ImGuiDockNodeFlags_PassthruCentralNode;
+    }
+
+    // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background
+    // and handle the pass-thru hole, so we ask Begin() to not render a background.
+    if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+        window_flags |= ImGuiWindowFlags_NoBackground;
+
+    // Important: note that we proceed even if Begin() returns false (aka window is collapsed).
+    // This is because we want to keep our DockSpace() active. If a DockSpace() is inactive,
+    // all active windows docked into it will lose their parent and become undocked.
+    // We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
+    // any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
+    if (!opt_padding)
+        igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0.0f, 0.0f});
+
+    ImGuiWindowClass cls = {
+        .ClassId = 0,
+        .ParentViewportId = -1,
+        .DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoSplit,
+        .DockingAllowUnclassed = true
+    };
+        igSetNextWindowClass(&cls);           // set next window class (control docking compatibility + provide hints to platform backend via custom viewport flags and platform parent/child relationship)
+
+    igBegin("DockSpace Demo", NULL, window_flags);
+    { 
+        if (!opt_padding)
+            igPopStyleVar(1);
+
+        if (opt_fullscreen)
+            igPopStyleVar(2);
+
+        // Submit the DockSpace
+        ImGuiIO* io = igGetIO();
+        if (io->ConfigFlags & ImGuiConfigFlags_DockingEnable)
+        {
+            ImGuiID dockspace_id = igGetID_Str("MyDockSpace");
+            igDockSpace(dockspace_id, (ImVec2){0.0f, 0.0f}, dockspace_flags, NULL);
+        } 
+
+        if (igBeginMenuBar())
+        { 
+            // Iterate through all gui menu options in this context, then draw
+            for (
+                gs_hash_table_iter it = gs_hash_table_iter_new(gsimgui->menus);
+                gs_hash_table_iter_valid(gsimgui->menus, it);
+                gs_hash_table_iter_advance(gsimgui->menus, it)
+            )
+            {
+                gs_imgui_menu_t* menu = gs_hash_table_iter_getp(gsimgui->menus, it);
+                if (igBeginMenu(menu->name, true)) 
+                {
+                    for (
+                        gs_hash_table_iter mit = gs_hash_table_iter_new(menu->items);
+                        gs_hash_table_iter_valid(menu->items, mit);
+                        gs_hash_table_iter_advance(menu->items, mit)
+                    )
+                    {
+                        gs_imgui_callback_desc_t* cb = gs_hash_table_iter_getp(menu->items, mit);
+                        gs_assert(cb); gs_assert(cb->cb); 
+                        cb->cb(cb->user_data);
+                    }
+                    igEndMenu();
+                }
+            }
+
+            igEndMenuBar();
+        }
+    } 
+    igEnd(); 
+
+    // Iterate through all gui windows in this context, then draw
+    for (
+        gs_hash_table_iter it = gs_hash_table_iter_new(gsimgui->windows);
+        gs_hash_table_iter_valid(gsimgui->windows, it);
+        gs_hash_table_iter_advance(gsimgui->windows, it)
+    )
+    { 
+        gs_imgui_callback_desc_t* cb = gs_hash_table_iter_getp(gsimgui->windows, it);
+        gs_assert(cb); gs_assert(cb->cb);
+        cb->cb(cb->user_data);
+    }
+#endif
+
+    for (uint32_t i = 0; i < WIN_CNT; ++i)
+    { 
+        gs_snprintfc(TMP, 256, "Test_%zu", i); 
+        igSetNextWindowPos((ImVec2){100.f + i * 10.f}, 0, (ImVec2){0.f, 0.f});
+        igSetNextWindowSize((ImVec2){200.f, 300.f}, 0);
+        igBegin(TMP, NULL, 0x00);
+        igEnd(); 
+    }
 
     // Imgui render
-    gs_imgui_render(&app->core->imgui, cb);
+    gs_imgui_render(gsimgui, cb, NULL);
+
+#else
+    for (uint32_t i = 0; i < WIN_CNT; ++i)
+    {
+        gs_snprintfc(TMP, 256, "Test_%zu", i);
+        // Gui code
+        gs_gui_window_set_next_position(gsgui, gs_v2s(100.f + i * 10.f));
+        gs_gui_window_set_next_size(gsgui, gs_v2(200.f, 300.f));
+        if (gs_gui_window_begin(gsgui, TMP))
+        { 
+        }
+        gs_gui_window_end(gsgui); 
+    } 
+
+    // Render
+    gs_gui_render(gsgui, cb, NULL); 
+#endif
+*/ 
+    /* do window */
+    /*
+    if (gs_gui_begin_window(&gsmui->mu, "Demo Window", gs_gui_rect(40, 40, 300, 450))) 
+    {
+        gs_gui_Container *win = gs_gui_get_current_container(&gsmui->mu);
+        win->rect.w = gs_gui_max(win->rect.w, 240);
+        win->rect.h = gs_gui_max(win->rect.h, 300);
+        gs_gui_end_window(&gsmui->mu);
+    } 
+    
+    gs_gs_gui_render(gsmui, cb);
+    */
+
+	for ( uint32_t i = 0; i < WIN_CNT; ++i )
+	{ 
+        double rx = gs_rand_gen(&app->rand);
+        double ry = gs_rand_gen(&app->rand);
+        double rw = gs_rand_gen(&app->rand);
+        double rh = gs_rand_gen(&app->rand); 
+		gs_gui_rect_t r = gs_gui_rect(rx * 800.f, ry * 400.f, rw * 100.f, rh * 100.f);
+		gs_snprintfc(TMP, 256, "Test_%zu", i);
+
+        #if STATIC_WIN_DIMS
+            r.x = 100.f;
+            r.y = 100.f;
+            r.w = 100.f;
+            r.h = 100.f;
+        #endif
+
+		if (gs_gui_begin_window(gsgui, TMP, r))
+		{ 
+            for (uint32_t j = 0; j < 20; ++j)
+            {
+                gs_snprintfc(BTMP, 256, "Hello_%zu", j);
+                if (gs_gui_button(gsgui, BTMP))
+                {
+                    gs_println("Hello: %zu", j);
+                }
+            }
+
+            static char BUF[256] = {0};
+            if (gs_gui_textbox(gsgui, BUF, 256))
+            {
+            }
+            gs_gui_end_window(gsgui);
+		}
+	}
+
+    gs_gui_end(gsgui, cb);
+    gs_gui_render(gsgui, cb);
+
+    gs_timed_action(60, {
+        gs_println("frame: %.2f", gs_engine_subsystem(platform)->time.frame);
+    }); 
 
     // Submit command buffer for rendering
     gs_graphics_submit_command_buffer(cb); 

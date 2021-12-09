@@ -3,11 +3,28 @@
 
 #define IM_ASSERT gs_assert
 
-// Main context for necessary imgui information
-typedef struct gs_imgui_t
+// Need some sort of docking here...
+
+typedef void (* gs_imgui_func)(void* user_data);
+
+typedef struct gs_imgui_callback_desc_t
 {
-    uint32_t win_hndl;  
+    gs_imgui_func cb;
+    void* user_data;
+    const char* name;
+    const char* category;
+} gs_imgui_callback_desc_t; 
+
+typedef struct gs_imgui_menu_t
+{
+    const char* name;
+    gs_hash_table(uint64_t, gs_imgui_callback_desc_t) items;
+} gs_imgui_menu_t;
+
+typedef struct gs_imgui_context_t
+{
     double time;
+    uint32_t win_hndl;
     bool32 mouse_just_pressed[ImGuiMouseButton_COUNT]; 
     bool32 mouse_cursors[ImGuiMouseCursor_COUNT];
     gs_handle(gs_graphics_pipeline_t) pip;
@@ -15,9 +32,17 @@ typedef struct gs_imgui_t
     gs_handle(gs_graphics_index_buffer_t) ibo;
     gs_handle(gs_graphics_shader_t) shader;
     gs_handle(gs_graphics_texture_t) font_tex; 
-    gs_handle(gs_graphics_uniform_t) u_tex;
+    gs_handle(gs_graphics_uniform_t) u_tex; 
     gs_handle(gs_graphics_uniform_t) u_proj;
     ImGuiContext* ctx;
+    gs_hash_table(uint64_t, gs_imgui_callback_desc_t) windows;  
+    gs_hash_table(uint64_t, gs_imgui_menu_t) menus;  
+} gs_imgui_context_t;
+
+// Main context for necessary imgui information
+typedef struct gs_imgui_t
+{
+    gs_hash_table(uint32_t, ImGuiContext*) contexts;
 } gs_imgui_t;
 
 typedef struct gs_imgui_vertex_t 
@@ -28,16 +53,19 @@ typedef struct gs_imgui_vertex_t
 } gs_imgui_vertex_t;
 
 #ifdef GS_PLATFORM_WEB
-    #define GS_IMGUI_SHADER_VERSION "#version 300 es\n"
+    #define GS_IMGUI_SHADER_VERSION "#version 300 es\n" 
 #else
     #define GS_IMGUI_SHADER_VERSION "#version 330 core\n"
 #endif
 
-GS_API_DECL gs_imgui_t   gs_imgui_new(uint32_t hndl, bool install_callbacks);
-GS_API_DECL void         gs_imgui_device_create(gs_imgui_t* gs);
-GS_API_DECL bool         gs_imgui_create_fonts_texture(gs_imgui_t* gs);
-GS_API_DECL void         gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb);
-GS_API_DECL void         gs_imgui_new_frame(gs_imgui_t* gs);
+GS_API_DECL void                gs_imgui_context_new(gs_imgui_t* gs, uint32_t hndl, bool install_callbacks);
+GS_API_DECL void                gs_imgui_device_create(gs_imgui_context_t* ctx);
+GS_API_DECL bool                gs_imgui_create_fonts_texture(gs_imgui_context_t* ctx);
+GS_API_DECL void                gs_imgui_render(gs_imgui_context_t* ctx, gs_command_buffer_t* cb, const gs_color_t* clear_color);
+GS_API_DECL void                gs_imgui_new_frame(gs_imgui_context_t* ctx);
+GS_API_DECL gs_imgui_context_t* gs_imgui_get_context(gs_imgui_t* gs, uint32_t window_hndl); 
+GS_API_DECL void                gs_imgui_register_window(gs_imgui_context_t* ctx, gs_imgui_callback_desc_t* cb);
+GS_API_DECL void                gs_imgui_register_menu_item(gs_imgui_context_t* ctx, const char* name, gs_imgui_callback_desc_t* cb);
 
 /*===============================
 //      Implementation
@@ -45,7 +73,7 @@ GS_API_DECL void         gs_imgui_new_frame(gs_imgui_t* gs);
 
 #ifdef GS_IMGUI_IMPL
 
-GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
+GS_API_DECL void gs_imgui_device_create(gs_imgui_context_t* ctx)
 {
     static const char* imgui_vertsrc =
         GS_IMGUI_SHADER_VERSION
@@ -84,7 +112,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     strncpy(sdesc.name, "imgui", 5);
 
     // Create shader
-    gs->shader = gs_graphics_shader_create (&sdesc);
+    ctx->shader = gs_graphics_shader_create (&sdesc);
 
     // Uniform texture
     gs_graphics_uniform_layout_desc_t slayout = gs_default_val();
@@ -92,7 +120,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     gs_graphics_uniform_desc_t utexdesc = gs_default_val();
     strncpy(utexdesc.name, "Texture", 7);
     utexdesc.layout = &slayout;
-    gs->u_tex = gs_graphics_uniform_create(&utexdesc);
+    ctx->u_tex = gs_graphics_uniform_create(&utexdesc);
 
     // Construct uniform
     gs_graphics_uniform_layout_desc_t ulayout = gs_default_val();
@@ -102,7 +130,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     udesc.layout = &ulayout;
 
     // Construct project matrix uniform
-    gs->u_proj = gs_graphics_uniform_create(&udesc);
+    ctx->u_proj = gs_graphics_uniform_create(&udesc);
 
     // Vertex buffer description
     gs_graphics_vertex_buffer_desc_t vbufdesc = gs_default_val();
@@ -110,7 +138,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     vbufdesc.data = NULL;
 
     // Construct vertex buffer
-    gs->vbo = gs_graphics_vertex_buffer_create(&vbufdesc);
+    ctx->vbo = gs_graphics_vertex_buffer_create(&vbufdesc);
 
     // Index buffer desc
     gs_graphics_index_buffer_desc_t ibufdesc = gs_default_val();
@@ -118,7 +146,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     ibufdesc.data = NULL;
 
     // Create index buffer
-    gs->ibo = gs_graphics_index_buffer_create(&ibufdesc);
+    ctx->ibo = gs_graphics_index_buffer_create(&ibufdesc);
 
     // Vertex attr layout
     gs_graphics_vertex_attribute_desc_t vattrs[3] = gs_default_val();
@@ -128,7 +156,7 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
 
     // Pipeline desc
     gs_graphics_pipeline_desc_t pdesc = gs_default_val();
-    pdesc.raster.shader = gs->shader;
+    pdesc.raster.shader = ctx->shader;
     pdesc.raster.index_buffer_element_size = (sizeof(ImDrawIdx) == 2) ? sizeof(uint16_t) : sizeof(uint32_t);
     pdesc.blend.func = GS_GRAPHICS_BLEND_EQUATION_ADD;
     pdesc.blend.src = GS_GRAPHICS_BLEND_MODE_SRC_ALPHA;
@@ -137,21 +165,21 @@ GS_API_DECL void gs_imgui_device_create(gs_imgui_t* gs)
     pdesc.layout.size = sizeof(vattrs);
 
     // Create pipeline
-    gs->pip = gs_graphics_pipeline_create(&pdesc);
+    ctx->pip = gs_graphics_pipeline_create(&pdesc);
 
     // Create default fonts texture
-    gs_imgui_create_fonts_texture(gs);
+    gs_imgui_create_fonts_texture(ctx);
 }
 
-GS_API_DECL gs_imgui_t gs_imgui_new(uint32_t hndl, bool install_callbacks)
+GS_API_DECL void gs_imgui_context_new(gs_imgui_t* gs, uint32_t hndl, bool install_callbacks)
 {
-    gs_imgui_t gs = gs_default_val();
+    gs_imgui_context_t* ctx = gs_malloc_init(gs_imgui_context_t);
+    ctx->ctx = igCreateContext(NULL);
+    igSetCurrentContext(ctx->ctx);
 
-    gs.ctx = igCreateContext(NULL);
-    igSetCurrentContext(gs.ctx);
-
-    gs.win_hndl = hndl;
-    gs.time = 0.0;
+    gs_hash_table_insert(gs->contexts, hndl, ctx); 
+    ctx->time = 0.0;
+    ctx->win_hndl = hndl;
 
     // Setup backend capabilities flags
     ImGuiIO* io = igGetIO(); 
@@ -191,7 +219,7 @@ GS_API_DECL gs_imgui_t gs_imgui_new(uint32_t hndl, bool install_callbacks)
     // Rendering
     io->BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
 
-    gs_imgui_device_create(&gs);
+    gs_imgui_device_create(ctx);
 
 //     io.SetClipboardTextFn = ImGui_ImplGlfw_SetClipboardText;
 //     io.GetClipboardTextFn = ImGui_ImplGlfw_GetClipboardText;
@@ -243,8 +271,13 @@ GS_API_DECL gs_imgui_t gs_imgui_new(uint32_t hndl, bool install_callbacks)
 
 }
 
+GS_API_DECL gs_imgui_context_t* gs_imgui_get_context(gs_imgui_t* gs, uint32_t window_hndl)
+{
+    return gs_hash_table_get(gs->contexts, window_hndl);
+}
+
 GS_API_DECL bool     
-gs_imgui_create_fonts_texture(gs_imgui_t* gs)
+gs_imgui_create_fonts_texture(gs_imgui_context_t* ctx)
 {
     // Build texture atlas
     ImGuiIO* io = igGetIO();
@@ -253,7 +286,6 @@ gs_imgui_create_fonts_texture(gs_imgui_t* gs)
 
     ImFontAtlas_GetTexDataAsRGBA32(io->Fonts, &pixels, &width, &height, &bytes_per_pixel);
     // Load as RGBA 32-bit (75% of the memory is wasted, but default font is so small) because it is more likely to be compatible with user's existing shaders. If your ImTextureId represent a higher-level concept than just a GL texture id, consider calling GetTexDataAsAlpha8() instead to save on GPU memory.
-    gs_println("font: %zu, %zu, %zu", width, height, bytes_per_pixel);
 
     // Create font texture
     gs_graphics_texture_desc_t tdesc = gs_default_val();
@@ -264,15 +296,15 @@ gs_imgui_create_fonts_texture(gs_imgui_t* gs)
     tdesc.mag_filter = GS_GRAPHICS_TEXTURE_FILTER_LINEAR; 
     tdesc.data = (void*)pixels;
 
-    gs->font_tex = gs_graphics_texture_create(&tdesc);
+    ctx->font_tex = gs_graphics_texture_create(&tdesc);
 
     // Store our identifier
-    io->Fonts->TexID = (ImTextureID)(intptr_t)gs->font_tex.id; 
+    io->Fonts->TexID = (ImTextureID)(intptr_t)ctx->font_tex.id; 
 
     return true;
 }
 
-void gs_imgui_update_mouse_and_keys(gs_imgui_t* ctx)
+void gs_imgui_update_mouse_and_keys(gs_imgui_context_t* ctx)
 {
     ImGuiIO* io = igGetIO();
 
@@ -349,10 +381,9 @@ void gs_imgui_update_mouse_and_keys(gs_imgui_t* ctx)
     gs_platform_mouse_wheel(&io->MouseWheelH, &io->MouseWheel);
 }
 
-GS_API_DECL void gs_imgui_new_frame(gs_imgui_t* gs)
+GS_API_DECL void gs_imgui_new_frame(gs_imgui_context_t* ctx)
 {
-    gs_assert(gs->ctx != NULL);
-    igSetCurrentContext(gs->ctx);
+    igSetCurrentContext(ctx->ctx);
     gs_assert(igGetCurrentContext() != NULL);
 
     ImGuiIO* io = igGetIO();
@@ -363,28 +394,26 @@ GS_API_DECL void gs_imgui_new_frame(gs_imgui_t* gs)
     uint32_t display_w, display_h;
 
     // Get platform window size and framebuffer size from window handle
-    gs_platform_window_size(gs->win_hndl, &w, &h);
-    gs_platform_framebuffer_size(gs->win_hndl, &display_w, &display_h);
+    gs_platform_window_size(ctx->win_hndl, &w, &h);
+    gs_platform_framebuffer_size(ctx->win_hndl, &display_w, &display_h);
 
     io->DisplaySize = (ImVec2){(float)w, (float)h};
     if (w > 0 && h > 0)
         io->DisplayFramebufferScale = (ImVec2){(float)display_w / w, (float)display_h / h};
 
     // Setup time step
-    // double current_time = (double)gs_platform_elapsed_time();
     io->DeltaTime = gs_engine_subsystem(platform)->time.delta;
-    // io.DeltaTime = gs->time > 0.0 ? (float)(current_time - gs->time) : (float)(1.0f / 60.0f);
-    // gs->time = current_time;
+    ctx->time = (double)gs_platform_elapsed_time();
 
-    gs_imgui_update_mouse_and_keys(gs);
+    gs_imgui_update_mouse_and_keys(ctx);
 
     igNewFrame();
 }
 
-GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
-{
+GS_API_DECL void gs_imgui_render(gs_imgui_context_t* ctx, gs_command_buffer_t* cb, const gs_color_t* clear_color)
+{ 
     // Set current context
-    igSetCurrentContext(gs->ctx);
+    igSetCurrentContext(ctx->ctx);
 
     // Do da drawing   
     igRender();
@@ -417,13 +446,13 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
 
     // Set up data binds
     gs_graphics_bind_vertex_buffer_desc_t vbuffers = gs_default_val();
-    vbuffers.buffer = gs->vbo;
+    vbuffers.buffer = ctx->vbo;
 
     gs_graphics_bind_index_buffer_desc_t ibuffers = gs_default_val();
-    ibuffers.buffer = gs->ibo;
+    ibuffers.buffer = ctx->ibo;
 
     gs_graphics_bind_uniform_desc_t ubuffers = gs_default_val();
-    ubuffers.uniform = gs->u_proj;
+    ubuffers.uniform = ctx->u_proj;
     ubuffers.data = &m;
 
     // Set up data binds
@@ -440,13 +469,16 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
     ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
 
     // Render pass action for clearing the screen
-    gs_graphics_clear_action_t action = gs_default_val(); 
-    action.color[0] = 0.0f; 
-    action.color[1] = 0.0f; 
-    action.color[2] = 0.0f; 
-    action.color[3] = 1.0f;
     gs_graphics_clear_desc_t clear = gs_default_val();
-    clear.actions = &action;
+    gs_graphics_clear_action_t action = gs_default_val(); 
+    if (clear_color)
+    {
+        action.color[0] = clear_color->r; 
+        action.color[1] = clear_color->g; 
+        action.color[2] = clear_color->b; 
+        action.color[3] = clear_color->a;
+        clear.actions = &action;
+    }
 
     // Default action pass
     gs_handle(gs_graphics_render_pass_t) def_pass = gs_default_val();
@@ -456,13 +488,13 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
     gs_graphics_begin_render_pass(cb, def_pass);
     {
         // Bind pipeline
-        gs_graphics_bind_pipeline(cb, gs->pip);
+        gs_graphics_bind_pipeline(cb, ctx->pip);
 
         // Set viewport
         gs_graphics_set_viewport(cb, 0, 0, fb_width, fb_height);
 
         // Clear screen
-        // gs_graphics_clear(cb, &clear);
+        gs_graphics_clear(cb, &clear);
 
         // Global bindings for pipeline
         gs_graphics_apply_bindings(cb, &binds);
@@ -477,14 +509,14 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
             vdesc.usage = GS_GRAPHICS_BUFFER_USAGE_STREAM;
             vdesc.data = cmd_list->VtxBuffer.Data;
             vdesc.size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
-            gs_graphics_vertex_buffer_request_update(cb, gs->vbo, &vdesc);
+            gs_graphics_vertex_buffer_request_update(cb, ctx->vbo, &vdesc);
 
             // Update index buffer
             gs_graphics_index_buffer_desc_t idesc = gs_default_val();
             idesc.usage = GS_GRAPHICS_BUFFER_USAGE_STREAM;
             idesc.data = cmd_list->IdxBuffer.Data;
             idesc.size = cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx);
-            gs_graphics_index_buffer_request_update(cb, gs->ibo, &idesc);
+            gs_graphics_index_buffer_request_update(cb, ctx->ibo, &idesc);
 
             // Iterate through command buffer
             for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
@@ -527,7 +559,7 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
                         gs_handle(gs_graphics_texture_t) tex = gs_handle_create(gs_graphics_texture_t, (uint32_t)(intptr_t)pcmd->TextureId);
 
                         gs_graphics_bind_uniform_desc_t sbuffer = gs_default_val();
-                        sbuffer.uniform = gs->u_tex;
+                        sbuffer.uniform = ctx->u_tex;
                         sbuffer.data = &tex;
                         sbuffer.binding = 0;
 
@@ -549,6 +581,25 @@ GS_API_DECL void gs_imgui_render(gs_imgui_t* gs, gs_command_buffer_t* cb)
         }
     }
     gs_graphics_end_render_pass(cb);
+}
+
+GS_API_DECL void gs_imgui_register_window(gs_imgui_context_t* ctx, gs_imgui_callback_desc_t* cb)
+{
+    gs_assert(ctx); gs_assert(cb); gs_assert(cb->name);
+    gs_hash_table_insert(ctx->windows, cb->name, *cb);
+}
+
+GS_API_DECL void gs_imgui_register_menu_item(gs_imgui_context_t* ctx, const char* menu_name, gs_imgui_callback_desc_t* cb)
+{ 
+    gs_assert(ctx); gs_assert(cb);
+    if (!ctx->menus || !gs_hash_table_key_exists(ctx->menus, gs_hash_str64(menu_name)))
+    {
+        gs_hash_table_insert(ctx->menus, gs_hash_str64(menu_name), (gs_imgui_menu_t){.name = menu_name}); 
+    }
+
+    gs_imgui_menu_t* menu = gs_hash_table_getp(ctx->menus, gs_hash_str64(menu_name));
+    gs_assert(menu); 
+    gs_hash_table_insert(menu->items, gs_hash_str64(cb->name), *cb);
 }
 
 #endif // GS_IMGUI_IMPL
