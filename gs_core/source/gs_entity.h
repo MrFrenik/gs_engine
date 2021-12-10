@@ -260,7 +260,7 @@ GS_API_DECL void gs_entities_deallocate(gs_entity_manager_t* entities, uint32_t 
     {
         for (uint32_t i = 0; i < gs_dyn_array_size(ent->components); ++i) 
         {
-            gs_entities_remove_component_w_id(entities, hndl, ent->components[i], false);
+            gs_entities_remove_component_w_id(entities, hndl, ent->components[i]);
         }
     } 
 

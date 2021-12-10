@@ -1093,7 +1093,7 @@ GS_API_DECL void gs_gui_draw_text(gs_gui_context_t* ctx, gs_asset_font_t* font, 
     }
 } 
 
-GS_API_DECL void gs_gui_draw_icon(gs_gui_context_t* ctx, uint32_t id, gs_gui_rect_t rect, gs_color_t color) 
+GS_API_DECL void gs_gui_draw_icon(gs_gui_context_t* ctx, int32_t id, gs_gui_rect_t rect, gs_color_t color) 
 {
 	gs_gui_command_t* cmd;
 

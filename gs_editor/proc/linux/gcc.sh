@@ -14,18 +14,19 @@ flags=(
 
 # Reflection includes
 refl_inc=(
-    -I ${core_dir}/source/
+    	-I ../../gs_core/source/
+    	-I ../../gs_core/third_party/include/
 )
 
 # Reflection source
 refl_src=(
-    -I ${core_dir}/source/
+   	../../gs_core/source/reflection/main.c
 )
 
 # Editor includes
 proj_inc=(
-	-I ../third_party/include/
-    -I ${core_dir}/source/ 
+	-I ../../gs_core/third_party/include/
+    	-I ../../gs_core/source/ 
 )
 
 # Source files
@@ -34,18 +35,18 @@ proj_src=(
 )
 
 # Compile reflection
-gcc -O3 ${refl_inc[*]} ${refl_src[*]} ${flags[*]} -lm -o ${refl_name}
+gcc -O0 ${refl_inc[*]} ${refl_src[*]} ${flags[*]} -lm -o reflection
 
 # Run reflection for gs files
-./${refl_name} "${core_dir}/source" "${core_dir}/source/reflection/" "gs"
+./reflection "${core_dir}/source" "${core_dir}/source/reflection/" "gs"
 
 # Run reflection for gs_editor files
-./${refl_name} "$../source" "../source/reflection/" "gs_editor"
+./reflection "$../source" "../source/reflection/" "gs_editor"
 
 # Compile gs_editor (debug)
-gcc -O0 ${proj_inc[*]} ${proj_src[*]} ${flags[*]} -lm -o ${proj_name}
+gcc -O0 ${proj_inc[*]} ${proj_src[*]} ${flags[*]} -lm -o gs_editor
 
 # Compile gs_editor (release)
-# gcc -O3 ${proj_inc[*]} ${proj_src[*]} ${flags[*]} -lm -o ${proj_name}
+# gcc -O3 ${proj_inc[*]} ${proj_src[*]} ${flags[*]} -lm -o gs_editor
 
 cd ..

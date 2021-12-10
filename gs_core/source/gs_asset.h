@@ -118,7 +118,7 @@ typedef struct gs_texture_t
 
 } gs_texture_t; 
 
-GS_API_DECL gs_result gs_texture_serialize(gs_byte_buffer_t* buffer, gs_object_t* in);
+GS_API_DECL gs_result gs_texture_serialize(gs_byte_buffer_t* buffer, const gs_object_t* in);
 GS_API_DECL gs_result gs_texture_deserialize(gs_byte_buffer_t* buffer, gs_object_t* out); 
 GS_API_DECL bool gs_texture_load_resource_from_file(const char* path, gs_asset_t* out, void* user_data);
 
@@ -273,7 +273,7 @@ typedef struct gs_asset_manager_t
 } gs_asset_manager_t;
 
 GS_API_DECL void gs_assets_init(gs_asset_manager_t* am, const char* root_path);
-GS_API_DECL const char* assets_get_internal_file_extension(const char* ext);
+GS_API_DECL const char* assets_get_internal_file_extension(gs_asset_manager_t* am, const char* ext);
 GS_API_DECL gs_asset_handle_t gs_assets_import(gs_asset_manager_t* am, const char* path, void* user_data, bool serialize_to_disk);
 GS_API_DECL gs_asset_handle_t gs_assets_add_to_database(gs_asset_manager_t* am, gs_asset_t* asset, const char* dir, const char* name, bool serialize_to_disk);
 GS_API_DECL gs_result gs_assets_serialize_asset(gs_asset_manager_t* am, const char* path, const gs_asset_t* in);
@@ -857,7 +857,7 @@ GS_API_DECL bool gs_texture_load_resource_from_file(const char* path, gs_asset_t
 	return true;
 } 
 
-GS_API_DECL gs_result gs_texture_serialize(gs_byte_buffer_t* buffer, const gs_object_t	* in)
+GS_API_DECL gs_result gs_texture_serialize(gs_byte_buffer_t* buffer, const gs_object_t* in)
 {
     gs_println("SERIALIZE!");
     return GS_RESULT_INCOMPLETE;
@@ -986,14 +986,14 @@ typedef struct gs_pipeline_parse_data_t
 #define gs_parse_warning(TXT, ...)\
     do {\
         gs_printf("WARNING::");\
-        gs_printf(TXT, __VA_ARGS__);\
+        gs_printf(TXT, ##__VA_ARGS__);\
         gs_println("");\
     } while (0)
 
 #define gs_parse_error(TXT, ASSERT, ...)\
     do {\
         gs_printf("ERROR::");\
-        gs_printf(TXT, __VA_ARGS__);\
+        gs_printf(TXT, ##__VA_ARGS__);\
         gs_println("");\
         if (ASSERT) gs_assert(false);\
     } while (0)
@@ -1099,7 +1099,7 @@ void gs_parse_uniforms(gs_lexer_t* lex, gs_gfxt_pipeline_desc_t* desc, gs_ppd_t*
     PIPELINE::UNIFORMS,
     {
         gs_gfxt_uniform_desc_t uniform = {0};
-        uniform.type = gs_uniform_type_from_token(&token, stage); 
+        uniform.type = gs_uniform_type_from_token(&token); 
         uniform.stage = stage;
 
         switch (uniform.type)

@@ -597,7 +597,8 @@ GS_API_DECL void gs_editor_update()
 
     log_window(gsgui);
 
-    gs_gui_end(gsgui, cb);
+    gs_gui_end(gsgui);
+
     gs_gui_render(gsgui, cb);
 
     gs_timed_action(60, {

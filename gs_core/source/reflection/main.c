@@ -900,7 +900,7 @@ interface_end:
 	// Close the file
 	fclose(fp);
 
-implementation_begin:
+implementation_begin:; // Empty statement
 
 	// Path to write to
 	gs_snprintfc(FPATH, META_STR_MAX, "%s/%s_generated.c", dir, namespace);
@@ -1072,7 +1072,7 @@ implementation_begin:
 		}
 	}
 
-register_implementation_end:
+register_implementation_end:; // Empty statement
 
 	gs_fprintln(fp, "}");	
 
@@ -1335,7 +1335,7 @@ register_implementation_end:
         gs_fprintln(fp, "");	
     } 
 
-implementation_end:
+implementation_end:; // Empty statement
 
 	// Close the file
 	fclose(fp);
