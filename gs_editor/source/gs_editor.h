@@ -150,6 +150,7 @@
     // 
 */
 
+/*
 typedef struct gs_editor_view_data_t
 {
     const char* category;
@@ -161,6 +162,7 @@ typedef struct gs_editor_view_data_t
 } gs_editor_view_data_t;
 
 typedef gs_editor_view_data_t gs_editor_view_desc_t;
+*/
 
 // App struct declaration 
 typedef struct gs_editor_t
@@ -170,24 +172,28 @@ typedef struct gs_editor_t
 
     // Your app data here...
     gs_asset_handle_t tex;
-    gs_hash_table(uint64_t, gs_editor_view_data_t*) views; 
+    // gs_hash_table(uint64_t, gs_editor_view_data_t*) views; 
     gs_mt_rand_t rand; 
 } gs_editor_t; 
 
 // Main application interface functions
 GS_API_DECL gs_app_desc_t gs_editor_main(int32_t argc, char** argv);
-GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_t* desc);
 GS_API_DECL void gs_editor_init();
 GS_API_DECL void gs_editor_update();
 GS_API_DECL void gs_editor_shutdown(); 
+
+/*
+GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_t* desc);
 GS_API_DECL void gs_editor_scene_view(void* data);
 GS_API_DECL void gs_editor_world_outliner_view(void* data);
 GS_API_DECL void gs_editor_asset_browser_view(void* data);
+*/
 
 // == [ Appplication Implementation ] == // 
 
 #ifdef gs_editor_IMPL 
 
+/*
 GS_API_DECL void gs_editor_world_outliner_view(void* data)
 {
     gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
@@ -208,6 +214,7 @@ GS_API_DECL void gs_editor_scene_view(void* data)
     gs_snprintfc(TMP, 256, "Enabled: %s", view->enabled ? "true" : "false");
     igText("Scene View: %s", TMP);
 }
+*/
 
 GS_API_DECL void gs_editor_init()
 {
@@ -221,6 +228,7 @@ GS_API_DECL void gs_editor_init()
     // Import texture into asset manager
     app->tex = gs_assets_import(&app->core->assets, "../../gs_core/assets/textures/logo.png", NULL, false); 
 
+    /*
     // Create scene view
     gs_editor_view_create(app, &(gs_editor_view_desc_t){
         .category = "Views", 
@@ -250,31 +258,17 @@ GS_API_DECL void gs_editor_init()
         .func = gs_editor_asset_browser_view,
         .window_handle = gs_platform_main_window()
     });
+    */
 
     app->rand = gs_rand_seed((uint64_t)time(NULL));
 } 
 
+/*
 GS_API_DECL void gs_editor_view_func(void* data)
 {
     // Grab view data
     gs_editor_view_data_t* view = (gs_editor_view_data_t*)data;
-    gs_assert(view);
-
-    /*
-    struct ImGuiWindowClass
-    {
-        ImGuiID             ClassId;                    // User data. 0 = Default class (unclassed). Windows of different classes cannot be docked with each others.
-        ImGuiID             ParentViewportId;           // Hint for the platform backend. -1: use default. 0: request platform backend to not parent the platform. != 0: request platform backend to create a parent<>child relationship between the platform windows. Not conforming backends are free to e.g. parent every viewport to the main viewport or not.
-        ImGuiViewportFlags  ViewportFlagsOverrideSet;   // Viewport flags to set when a window of this class owns a viewport. This allows you to enforce OS decoration or task bar icon, override the defaults on a per-window basis.
-        ImGuiViewportFlags  ViewportFlagsOverrideClear; // Viewport flags to clear when a window of this class owns a viewport. This allows you to enforce OS decoration or task bar icon, override the defaults on a per-window basis.
-        ImGuiTabItemFlags   TabItemFlagsOverrideSet;    // [EXPERIMENTAL] TabItem flags to set when a window of this class gets submitted into a dock node tab bar. May use with ImGuiTabItemFlags_Leading or ImGuiTabItemFlags_Trailing.
-        ImGuiDockNodeFlags  DockNodeFlagsOverrideSet;   // [EXPERIMENTAL] Dock node flags to set when a window of this class is hosted by a dock node (it doesn't have to be selected!)
-        bool                DockingAlwaysTabBar;        // Set to true to enforce single floating windows of this class always having their own docking node (equivalent of setting the global io.ConfigDockingAlwaysTabBar)
-        bool                DockingAllowUnclassed;      // Set to true to allow windows of this class to be docked/merged with an unclassed window. // FIXME-DOCK: Move to DockNodeFlags override?
-
-        ImGuiWindowClass() { memset(this, 0, sizeof(*this)); ParentViewportId = (ImGuiID)-1; DockingAllowUnclassed = true; }
-    };
-    */
+    gs_assert(view); 
 
     if (view->enabled)
     {
@@ -326,6 +320,7 @@ GS_API_DECL void gs_editor_view_create(gs_editor_t* editor, gs_editor_view_desc_
     // Insert data into editor
     gs_hash_table_insert(editor->views, gs_hash_str64(view->name), view);
 }
+*/
 
 static void write_log(char* logbuf, const char* text, bool* updated) {
     /* FIXME: THIS IS UNSAFE! */
@@ -379,10 +374,7 @@ GS_API_DECL void gs_editor_update()
     gs_command_buffer_t* cb = &core->cb;
     gs_immediate_draw_t* gsi = &core->gsi; 
     gs_entity_manager_t* em = &core->entities; 
-    gs_imgui_t* imgui = & core->imgui;
-    gs_imgui_context_t* gsimgui = gs_imgui_get_context(&app->core->imgui, gs_platform_main_window());
     gs_gui_context_t* gsgui = &app->core->gsgui;
-    gs_mu_ctx_t* gsmui = &core->gsmui;
 
     // Get necessary platform metrics
     const gs_vec2 fb = gs_platform_framebuffer_sizev(gs_platform_main_window());
@@ -391,9 +383,6 @@ GS_API_DECL void gs_editor_update()
     // Process input (closing window) 
     if (gs_platform_key_pressed(GS_KEYCODE_ESC)) gs_engine_quit(); 
 
-    gs_mu_new_frame(gsmui);
-
-    // gs_gui_new_frame(gsgui);
     gs_gui_begin(gsgui);
 
     // Update entity manager

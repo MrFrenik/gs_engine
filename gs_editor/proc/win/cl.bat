@@ -8,19 +8,13 @@ set name=gs_editor
 set core_dir=../../gs_core/
 
 rem Source Files
-set refl_name=Reflection
+set refl_name=reflection
 set src_refl_main=%core_dir%\source\reflection\main.c
 set refl_inc=/I %core_dir%\source\ 
 
 rem Include directories 
 set inc=/I %core_dir%\third_party\include\ 
 set core_inc=/I %core_dir%\source 
-
-set libdbg=%core_dir%\third_party\libs\win\dbg
-set librel=%core_dir%\third_party\libs\win\rel
-
-set core_libs_dbg=%libdbg%\cimgui.lib
-set core_libs_rel=%libdbg%\cimgui.lib
 
 rem Source files
 set src_main=..\source\gs_editor_main.c
@@ -51,7 +45,7 @@ rem /NODEFAULTLIB:libcmtd.lib /NODEFAULTLIB:msvcrtd.lib %core_libs_dbg% %os_libs
 rem Compile Debug
 cl /w /MP -Zi /DEBUG:FULL /Fe%name%.exe %src_main% %inc% %core_inc% ^
 /EHsc /link /SUBSYSTEM:CONSOLE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:libcmt.lib ^
-/NODEFAULTLIB:libcmtd.lib /NODEFAULTLIB:msvcrtd.lib %core_libs_dbg% %os_libs%
+/NODEFAULTLIB:libcmtd.lib /NODEFAULTLIB:msvcrtd.lib %os_libs%
 
 popd
 

@@ -47,9 +47,7 @@ typedef struct gs_core_t
 	gs_entity_manager_t	entities;
 	gs_asset_manager_t 	assets;
 	gs_meta_t 			meta;
-    gs_imgui_t          imgui;
     gs_gui_context_t    gsgui;
-    gs_mu_ctx_t         gsmui;
 } gs_core_t;
 
 GS_API_DECL gs_core_t* gs_core_new();
@@ -75,18 +73,11 @@ GS_API_DECL gs_core_t* gs_core_new()
 	gs_meta_register_gs(&core->meta); 
 
 	// Register all generated meta information
-	gs_meta_register_generated(&core->meta);
-
-    //=== [ ImGui ] ===// 
-    
-    gs_imgui_context_new(&core->imgui, gs_platform_main_window(), false); 
+	gs_meta_register_generated(&core->meta); 
 
     //=== [ GUI ] ===// 
 
-    gs_gui_init(&core->gsgui, gs_platform_main_window());
-
-    //=== [ MicroUI ] ===// 
-    core->gsmui = gs_mu_new(gs_platform_main_window()); 
+    gs_gui_init(&core->gsgui, gs_platform_main_window()); 
 
 	//=== [ Assets ] ====//
 	
