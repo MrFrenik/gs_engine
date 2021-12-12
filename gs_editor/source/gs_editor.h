@@ -147,6 +147,19 @@
         }
     }
 
+    // Want to load application library
+        - Gives access to all meta information for application 
+        - Gives access to project's assets
+        - Don't want to make any assumptions about structure of user's application
+        - Just want an editor to help create assets: 
+            - Entity scenes (a collection of serialized entities)
+            - Pipelines (full graphics pipelines, to either be bound separately or used with materials)
+            - Materials
+            - Meshes
+            - Textures
+            - Render Passes
+            - Components
+            - Code (hot reloadable code) 
     // 
 */
 
@@ -398,12 +411,10 @@ GS_API_DECL void gs_editor_update()
     gsi_rectvd(gsi, gs_v2(150.f, 150.f), gs_v2(500.f, 500.f * 0.18f), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_WHITE, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
 
     // Submit immediate draw render pass
-    gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255));
-
-// Need to speed up the hash table immensely now...
+    gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT 1
+#define WIN_CNT 3
 
 /*
 #if DO_IMGUI
@@ -572,8 +583,8 @@ GS_API_DECL void gs_editor_update()
         #if STATIC_WIN_DIMS
             r.x = 100.f;
             r.y = 100.f;
-            r.w = 100.f;
-            r.h = 100.f;
+            r.w = 400.f;
+            r.h = 300.f;
         #endif
 
 		if (gs_gui_begin_window(gsgui, TMP, r))
