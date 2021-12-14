@@ -351,6 +351,7 @@ static void log_window(gs_gui_context_t* ctx) {
 
     if (gs_gui_begin_window(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200))) 
     { 
+        /*
         gs_gui_layout_row(ctx, 1, (int[]) { -1 }, -28);
         gs_gui_begin_panel(ctx, "Panel"); 
         gs_gui_container_t* panel  = gs_gui_get_current_container(ctx);
@@ -362,10 +363,11 @@ static void log_window(gs_gui_context_t* ctx) {
             logbuf_updated = 0;
         }
 
-        /* input textbox + submit button */
+        */
+        // input textbox + submit button
         static char buf[1024];
         int submitted = 0;
-        gs_gui_layout_row(ctx, 2, (int[]) { -70, -1 }, 0);
+        // gs_gui_layout_row(ctx, 2, (int[]) { -70, -1 }, 0); 
         if (gs_gui_textbox(ctx, buf, sizeof(buf)) & GS_GUI_RES_SUBMIT) {
             gs_gui_set_focus(ctx, ctx->last_id);
             submitted = 1;
@@ -414,7 +416,7 @@ GS_API_DECL void gs_editor_update()
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT 3
+#define WIN_CNT 2
 
 /*
 #if DO_IMGUI
@@ -589,6 +591,11 @@ GS_API_DECL void gs_editor_update()
 
 		if (gs_gui_begin_window(gsgui, TMP, r))
 		{ 
+            static char BUF[256] = {0};
+            if (gs_gui_textbox(gsgui, BUF, 256))
+            {
+            }
+
             for (uint32_t j = 0; j < 20; ++j)
             {
                 gs_snprintfc(BTMP, 256, "Hello_%zu", j);
@@ -598,10 +605,6 @@ GS_API_DECL void gs_editor_update()
                 }
             }
 
-            static char BUF[256] = {0};
-            if (gs_gui_textbox(gsgui, BUF, 256))
-            {
-            }
             gs_gui_end_window(gsgui);
 		}
 	}
