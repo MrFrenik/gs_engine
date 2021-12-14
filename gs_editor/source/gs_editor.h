@@ -416,7 +416,7 @@ GS_API_DECL void gs_editor_update()
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT 2
+#define WIN_CNT 10
 
 /*
 #if DO_IMGUI
@@ -634,8 +634,8 @@ GS_API_DECL gs_app_desc_t gs_editor_main(int32_t argc, char** argv)
 {
     return (gs_app_desc_t) 
     {
-        .window_width = 800,
-        .window_height = 400,
+        .window_width = 1200,
+        .window_height = 700,
         .init = gs_editor_init,
         .update = gs_editor_update,
         .shutdown = gs_editor_shutdown,
