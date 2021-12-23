@@ -378,7 +378,7 @@ static void log_window(gs_gui_context_t* ctx) {
             buf[0] = '\0';
         }
         gs_gui_end_window(ctx);
-    }
+    } 
 }
 
 GS_API_DECL void gs_editor_update()
@@ -416,7 +416,7 @@ GS_API_DECL void gs_editor_update()
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT 10
+#define WIN_CNT  3
 
 /*
 #if DO_IMGUI
@@ -607,7 +607,7 @@ GS_API_DECL void gs_editor_update()
 
             gs_gui_end_window(gsgui);
 		}
-	}
+	} 
 
     log_window(gsgui);
 

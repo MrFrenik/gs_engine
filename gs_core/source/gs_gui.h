@@ -44,10 +44,9 @@
 
 // Directly modified from microui implementation: https://github.com/rxi/microui 
 
-#define SPLIT_SIZE 2.f
+#define GS_GUI_SPLIT_SIZE 2.f
 
-#define GS_GUI_MAX_CNT              1000
-
+#define GS_GUI_MAX_CNT              100 
 #define GS_GUI_COMMANDLIST_SIZE		(256 * 1024 * 4)
 #define GS_GUI_ROOTLIST_SIZE		GS_GUI_MAX_CNT
 #define GS_GUI_CONTAINERSTACK_SIZE	GS_GUI_MAX_CNT
@@ -56,12 +55,13 @@
 #define GS_GUI_LAYOUTSTACK_SIZE		GS_GUI_MAX_CNT
 #define GS_GUI_CONTAINERPOOL_SIZE	GS_GUI_MAX_CNT
 #define GS_GUI_TREENODEPOOL_SIZE	GS_GUI_MAX_CNT
-#define GS_GUI_SPLIT_SIZE	        GS_GUI_MAX_CNT
+#define GS_GUI_GS_GUI_SPLIT_SIZE	GS_GUI_MAX_CNT
 #define GS_GUI_MAX_WIDTHS			16
 #define GS_GUI_REAL					float
 #define GS_GUI_REAL_FMT				"%.3g"
 #define GS_GUI_SLIDER_FMT			"%.2f"
 #define GS_GUI_MAX_FMT				127
+#define GS_GUI_TAB_ITEM_MAX         24
 
 #define gs_gui_stack(T, n)			struct {int32_t idx; T items[n];}
 
@@ -111,6 +111,12 @@ enum {
 	GS_GUI_RES_SUBMIT			 = (1 << 1),
 	GS_GUI_RES_CHANGE			 = (1 << 2)
 };
+
+typedef enum gs_gui_alt_drag_mode_type {
+    GS_GUI_ALT_DRAG_QUAD = 0x00,        // Quadrants
+    GS_GUI_ALT_DRAG_NINE,               // Nine splice the window
+    GS_GUI_ALT_DRAG_SINGLE              // Single window drag (controls the width/height, leaving x/y position of window in tact)
+} gs_gui_alt_drag_mode_type;
 
 enum {
 	GS_GUI_OPT_ALIGNCENTER	= (1 << 0),
@@ -213,25 +219,18 @@ typedef struct gs_gui_split_node_t
     };
 } gs_gui_split_node_t;
 
-typedef enum gs_gui_split_location_type
+typedef enum gs_gui_split_type
 {
     GS_GUI_SPLIT_LEFT = 0x00,
     GS_GUI_SPLIT_RIGHT,
     GS_GUI_SPLIT_TOP,
     GS_GUI_SPLIT_BOTTOM,
-    GS_GUI_SPLIT_CENTER
-} gs_gui_split_location_type; 
-
-typedef enum gs_gui_split_type
-{
-    GS_GUI_SPLIT_VERTICAL = 0x00,
-    GS_GUI_SPLIT_HORIZONTAL,
     GS_GUI_SPLIT_TAB
-} gs_gui_split_type;
+} gs_gui_split_type; 
 
 typedef struct gs_gui_split_t
 {
-    gs_gui_split_type type;             // GS_GUI_SPLIT_LEFT, GS_GUI_SPLIT_RIGHT, GS_GUI_SPLIT_CENTER, GS_GUI_SPLIT_BOTTOm, GS_GUI_SPLIT_TOP
+    gs_gui_split_type type;             // GS_GUI_SPLIT_LEFT, GS_GUI_SPLIT_RIGHT, GS_GUI_SPLIT_TAB, GS_GUI_SPLIT_BOTTOM, GS_GUI_SPLIT_TOP
     float ratio;                        // Split ratio between children [0.f, 1.f], (left node = ratio), right node = (1.f - ratio)
     gs_gui_rect_t rect;
     gs_gui_rect_t prev_rect;
@@ -240,6 +239,26 @@ typedef struct gs_gui_split_t
     uint32_t id;
     uint32_t zindex;
 } gs_gui_split_t;
+
+typedef enum gs_gui_window_flags { 
+	GS_GUI_WINDOW_FLAGS_VISIBLE	= (1 << 0),
+} gs_gui_window_flags; 
+
+// Equidistantly sized tabs, based on rect of window
+typedef struct gs_gui_tab_item_t
+{
+    gs_gui_id tab_bar;
+    uint32_t zindex;        // Sorting index in tab bar
+    void* data;             // User set data pointer for this item
+} gs_gui_tab_item_t; 
+
+typedef struct gs_gui_tab_bar_t
+{
+    gs_gui_tab_item_t items[GS_GUI_TAB_ITEM_MAX];
+    uint32_t size;                                  // Current number of items in tab bar
+    gs_gui_rect_t rect;                             // Cached sized for tab bar
+    gs_gui_tab_item_t* focus;                       // Focused item in tab bar
+} gs_gui_tab_bar_t; 
 
 typedef struct gs_gui_container_t 
 {
@@ -251,8 +270,13 @@ typedef struct gs_gui_container_t
 	int32_t zindex;
 	int32_t open;
 	gs_gui_id id;
-    uint32_t split;                    // If container is docked, then will have owning split to get sizing (0x00 for NULL)
+    gs_gui_id split;                    // If container is docked, then will have owning split to get sizing (0x00 for NULL)
+    gs_gui_tab_item_t* tab_item;        // NOTE(john): I hate it, but until windows have their own draw lists and can do continued drawing later in the frame, this will have to do
+    struct gs_gui_container_t* parent;  // Owning parent (for tabbing)
 	int32_t opt;
+    uint32_t frame;
+    uint32_t visible;
+    int32_t flags;
 } gs_gui_container_t;
 
 typedef struct gs_gui_style_t
@@ -268,10 +292,12 @@ typedef struct gs_gui_style_t
 	gs_color_t colors[GS_GUI_COLOR_MAX];
 } gs_gui_style_t;
 
-typedef enum gs_gui_split_request_type
+typedef enum gs_gui_request_type
 {
     GS_GUI_SPLIT_NEW = 0x01,
-    GS_GUI_SPLIT_MOVE,
+    GS_GUI_CNT_MOVE,
+    GS_GUI_CNT_FOCUS,
+    GS_GUI_SPLIT_MOVE, 
     GS_GUI_SPLIT_RESIZE_SW,
     GS_GUI_SPLIT_RESIZE_SE,
     GS_GUI_SPLIT_RESIZE_NW,
@@ -280,19 +306,22 @@ typedef enum gs_gui_split_request_type
     GS_GUI_SPLIT_RESIZE_E,
     GS_GUI_SPLIT_RESIZE_N,
     GS_GUI_SPLIT_RESIZE_S,
-    GS_GUI_SPLIT_RATIO
-} gs_gui_split_request_type;
+    GS_GUI_SPLIT_RESIZE_CENTER,
+    GS_GUI_SPLIT_RATIO,
+    GS_GUI_SPLIT_RESIZE_INVALID
+} gs_gui_request_type;
 
-typedef struct gs_gui_split_request_t
+typedef struct gs_gui_request_t
 {
-    gs_gui_split_request_type type;
+    gs_gui_request_type type;
     union
     {
         gs_gui_split_type split_type;
         gs_gui_split_t* split;
+        gs_gui_container_t* cnt;
     };
     uint32_t frame;
-} gs_gui_split_request_t;
+} gs_gui_request_t; 
 
 typedef struct gs_gui_context_t 
 { 
@@ -328,10 +357,11 @@ typedef struct gs_gui_context_t
     gs_gui_split_t*     hover_split;
     gs_gui_id           next_lock_hover_id;
     gs_gui_id           lock_hover_id;
-    gs_gui_split_request_t split_request;
 	char number_edit_buf[GS_GUI_MAX_FMT];
 	gs_gui_id number_edit;
     gs_vec2 framebuffer;
+    gs_gui_alt_drag_mode_type alt_drag_mode;
+    gs_dyn_array(gs_gui_request_t) requests;
 
 	// Stacks
 	gs_gui_stack(uint8_t, GS_GUI_COMMANDLIST_SIZE) command_list;
@@ -347,6 +377,7 @@ typedef struct gs_gui_context_t
 	gs_gui_pool_item_t treenode_pool[GS_GUI_TREENODEPOOL_SIZE];
 
     gs_slot_array(gs_gui_split_t) splits;
+    gs_slot_array(gs_gui_tab_bar_t) tab_bars;
 
 	// Input state
 	gs_vec2 mouse_pos;
@@ -386,7 +417,9 @@ GS_API_DECL gs_gui_container_t* gs_gui_get_container(gs_gui_context_t *ctx, cons
 GS_API_DECL gs_gui_container_t* gs_gui_get_top_most_container(gs_gui_context_t* ctx, gs_gui_split_t* split);
 GS_API_DECL gs_gui_container_t* gs_gui_get_container_ex(gs_gui_context_t *ctx, gs_gui_id id, int32_t opt);
 GS_API_DECL void gs_gui_bring_to_front(gs_gui_context_t *ctx, gs_gui_container_t *cnt); 
-GS_API_DECL void gs_gui_bring_split_to_front(gs_gui_context_t* ctx, gs_gui_split_t* split);
+GS_API_DECL void gs_gui_bring_split_to_front(gs_gui_context_t* ctx, gs_gui_split_t* split); 
+GS_API_DECL gs_gui_split_t* gs_gui_get_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt);
+GS_API_DECL gs_gui_tab_bar_t* gs_gui_get_tab_bar(gs_gui_context_t* ctx, gs_gui_container_t* cnt);
 
 GS_API_DECL int32_t gs_gui_pool_init(gs_gui_context_t *ctx, gs_gui_pool_item_t *items, int32_t len, gs_gui_id id);
 GS_API_DECL int32_t gs_gui_pool_get(gs_gui_context_t *ctx, gs_gui_pool_item_t *items, int32_t len, gs_gui_id id);
@@ -576,21 +609,27 @@ GS_API_DECL void gs_gui_bring_split_to_front(gs_gui_context_t* ctx, gs_gui_split
         gs_snprintfc(TMP, 256, "!dockspace%zu", (size_t)split); 
         gs_gui_id id = gs_gui_get_id(ctx, TMP, 256);
         gs_gui_container_t* cnt = gs_gui_get_container(ctx, TMP); 
-        if (cnt) gs_gui_bring_to_front(ctx, cnt);
+        // if (cnt) gs_gui_bring_to_front(ctx, cnt);
         cnt->zindex = 0;
     }
     
     gs_gui_split_node_t* c0 = &split->children[0];
     gs_gui_split_node_t* c1 = &split->children[1];
 
-    if (c0->type == GS_GUI_SPLIT_NODE_CONTAINER) {gs_gui_bring_to_front(ctx, c0->container); ctx->hover = c0;}
+    if (c0->type == GS_GUI_SPLIT_NODE_CONTAINER) 
+    {
+        gs_gui_bring_to_front(ctx, c0->container); ctx->hover = c0;
+    }
     else
     {
         gs_gui_split_t* s = gs_slot_array_getp(ctx->splits, c0->split);
         gs_gui_bring_split_to_front(ctx, s);
     }
 
-    if (c1->type == GS_GUI_SPLIT_NODE_CONTAINER) {gs_gui_bring_to_front(ctx, c1->container); ctx->hover = c1;}
+    if (c1->type == GS_GUI_SPLIT_NODE_CONTAINER) 
+    {
+        gs_gui_bring_to_front(ctx, c1->container); ctx->hover = c1;
+    }
     else
     {
         gs_gui_split_t* s = gs_slot_array_getp(ctx->splits, c1->split);
@@ -696,11 +735,36 @@ static gs_gui_split_t* gs_gui_get_root_split_from_split(gs_gui_context_t* ctx, g
 
 static gs_gui_split_t* gs_gui_get_root_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
 {
-    gs_gui_split_t* split = NULL; 
-    if (cnt->split) split = gs_slot_array_getp(ctx->splits, cnt->split); 
+    gs_gui_split_t* split = gs_gui_get_split(ctx, cnt); 
+    if (split) return gs_gui_get_root_split_from_split(ctx, split);
     else return NULL;
-    return gs_gui_get_root_split_from_split(ctx, split);
 } 
+
+GS_API_DECL gs_gui_split_t* gs_gui_get_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
+{
+    gs_gui_tab_item_t* tab_item = cnt->tab_item ? cnt->tab_item : NULL;
+    gs_gui_tab_bar_t* tab_bar = tab_item ? gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar) : NULL; 
+    gs_gui_split_t* split = cnt->split ? gs_slot_array_getp(ctx->splits, cnt->split) : NULL;
+
+    // Look at split if in tab group
+    if (!split && tab_bar)
+    {
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
+        {
+            if (((gs_gui_container_t*)tab_bar->items[i].data)->split)
+            {
+                split = gs_slot_array_getp(ctx->splits, ((gs_gui_container_t*)tab_bar->items[i].data)->split);
+            }
+        }
+    }
+
+    return split;
+} 
+
+GS_API_DECL gs_gui_tab_bar_t* gs_gui_get_tab_bar(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
+{
+    return (cnt->tab_item ? gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar) : NULL);
+}
 
 static gs_gui_command_t* gs_gui_push_jump(gs_gui_context_t* ctx, gs_gui_command_t* dst) 
 {
@@ -841,7 +905,7 @@ static void gs_gui_begin_root_container(gs_gui_context_t *ctx, gs_gui_container_
 	if (
         gs_gui_rect_overlaps_vec2(cnt->rect, ctx->mouse_pos) &&
 		(!ctx->next_hover_root || cnt->zindex > ctx->next_hover_root->zindex) &&
-        ~opt & GS_GUI_OPT_NOHOVER
+        ~opt & GS_GUI_OPT_NOHOVER && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE
 	) 
     {
 		ctx->next_hover_root = cnt;
@@ -890,6 +954,7 @@ GS_API_DECL gs_gui_container_t* gs_gui_get_container_ex(gs_gui_context_t* ctx, g
 	memset(cnt, 0, sizeof(*cnt));
 	cnt->open = 1;
 	cnt->id = id;
+    cnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
 	gs_gui_bring_to_front(ctx, cnt);
 
 	return cnt;
@@ -937,205 +1002,540 @@ GS_API_DECL void gs_gui_undock_ex(gs_gui_context_t* ctx, const char* name)
     gs_gui_undock_ex_cnt(ctx, cnt);
 }
 
-GS_API_DECL void gs_gui_dock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* child, gs_gui_container_t* parent, int32_t split_type, float ratio)
+void gs_gui_set_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt, uint32_t id)
 {
+    cnt->split = id; 
+    gs_gui_tab_bar_t* tb = gs_gui_get_tab_bar(ctx, cnt);
+    if (tb)
+    {
+        for (uint32_t i = 0; i < tb->size; ++i) 
+        {
+            ((gs_gui_container_t*)tb->items[i].data)->split = id;
+        }
+    }
+}
+
+static gs_gui_container_t* gs_gui_get_parent(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
+{
+    return (cnt->parent ? cnt->parent : cnt);
+}
+
+GS_API_DECL void gs_gui_dock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* child, gs_gui_container_t* parent, int32_t split_type, float ratio)
+{ 
+    // Get top-level parent windows 
+    parent = gs_gui_get_parent(ctx, parent);
+    child = gs_gui_get_parent(ctx, child);
+
     if (!child || !parent)
     {
         return;
     } 
 
-    // Cache previous root splits
-    gs_gui_split_t* ps = gs_gui_get_root_split(ctx, parent); 
-    gs_gui_split_t* cs = gs_gui_get_root_split(ctx, child); 
-
-    gs_gui_split_t split = gs_default_val();
-    split.type = split_type;       
-    split.ratio = ratio; 
-    gs_gui_split_node_t c0 = gs_default_val(); 
-    c0.type = GS_GUI_SPLIT_NODE_CONTAINER;
-    c0.container = child;
-    gs_gui_split_node_t c1 = gs_default_val();
-    c1.type = GS_GUI_SPLIT_NODE_CONTAINER;
-    c1.container = parent; 
-    split.children[GS_GUI_SPLIT_NODE_CHILD] = c0;
-    split.children[GS_GUI_SPLIT_NODE_PARENT] = c1;
-    split.rect = ps ? ps->rect : parent->rect;
-    split.prev_rect = split.rect;
-
-    // Add new split to array
-    uint32_t hndl = gs_slot_array_insert(ctx->splits, split);
-
-    // Get newly inserted split pointer
-    gs_gui_split_t* sp = gs_slot_array_getp(ctx->splits, hndl);
-    sp->id = hndl;
-
-    // If both parents are null, creating a new split, new nodes, assigning to children's parents
-    if (!cs && !ps)
+    if (split_type == GS_GUI_SPLIT_TAB)
     { 
-        gs_println("0");
-        parent->split = hndl;
-        child->split = hndl; 
-    } 
-
-    // Child has split
-    else if (cs && !ps)
-    { 
-        gs_println("1");
-        // If child has split, then the split is different...
-        sp->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
-        sp->children[GS_GUI_SPLIT_NODE_CHILD].split = cs->id;
-
-        // Child split needs to be set to this parent 
-        cs->parent = hndl;
-
-        parent->split = hndl;
-    }
-
-    // Parent has split
-    else if (ps && !cs)
-    { 
-        gs_println("2"); 
-
-        // No child to tree to assign, so we can get the raw parent split here
-        ps = gs_slot_array_getp(ctx->splits, parent->split); 
-
-        // Assign parent split to previous
-        sp->parent = ps->id; 
-
-        // Fix up references
-        if (ps->children[GS_GUI_SPLIT_NODE_PARENT].container == parent)
+        // If the parent window has a tab bar, then need to get that tab bar item and add it 
+        if (parent->tab_item)
         {
-            ps->children[GS_GUI_SPLIT_NODE_PARENT].type = GS_GUI_SPLIT_NODE_SPLIT; 
-            ps->children[GS_GUI_SPLIT_NODE_PARENT].split = hndl;
+            gs_println("add to tab bar");
+
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, parent->tab_item->tab_bar);
+            gs_assert(tab_bar); 
+              
+            // Set all tab bar children to this as well, if has children, then release previous tab bar
+            if (child->tab_item)
+            {
+                uint32_t tbid = child->tab_item->tab_bar;
+                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_item->tab_bar); 
+                for (uint32_t i = 0; i < ctb->size; ++i)
+                {
+                    gs_gui_tab_item_t* cti = &tab_bar->items[tab_bar->size]; 
+                    gs_gui_container_t* c = (gs_gui_container_t*)ctb->items[i].data; 
+                    cti->tab_bar = parent->tab_item->tab_bar;
+                    cti->zindex = tab_bar->size++;
+                    cti->data = c;
+                    c->tab_item = cti;
+                    c->parent = parent;
+                }
+
+                // Free other tab bar
+                gs_slot_array_erase(ctx->tab_bars, tbid);
+            }
+			else
+			{
+				gs_gui_tab_item_t* tab_item = &tab_bar->items[tab_bar->size];
+				tab_item->tab_bar = parent->tab_item->tab_bar;
+				tab_item->zindex = tab_bar->size++;
+				tab_bar->focus = tab_item; 
+				child->tab_item = tab_item; 
+			}
+
+            child->rect = parent->rect;
+            child->tab_item->data = child;
+            child->parent = parent; 
         }
+        // Otherwise, create new tab bar
         else
         {
-            ps->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT; 
-            ps->children[GS_GUI_SPLIT_NODE_CHILD].split = hndl;
+            gs_println("create tab bar");
+
+            // Create tab bar
+            gs_gui_tab_bar_t tb = gs_default_val();
+            uint32_t hndl = gs_slot_array_insert(ctx->tab_bars, tb);
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, hndl);
+            gs_assert(tab_bar);
+
+            // Create tab items
+            gs_gui_tab_item_t* parent_tab_item = &tab_bar->items[tab_bar->size];
+            parent_tab_item->zindex = tab_bar->size++; 
+            parent_tab_item->tab_bar = hndl;
+
+            // Set parent tab item
+            parent->tab_item = parent_tab_item;
+            parent->tab_item->data = parent; 
+
+            uint32_t tbid = child->tab_item ? child->tab_item->tab_bar : 0;
+
+            // Set all tab bar children to this as well, if has children, then release previous tab bar
+            if (child->tab_item)
+            {
+                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_item->tab_bar); 
+                for (uint32_t i = 0; i < ctb->size; ++i)
+                {
+                    gs_gui_tab_item_t* cti = &tab_bar->items[tab_bar->size]; 
+                    gs_gui_container_t* c = (gs_gui_container_t*)ctb->items[i].data; 
+                    cti->tab_bar = hndl;
+                    cti->zindex = tab_bar->size++;
+                    cti->data = c;
+                    c->tab_item = cti;
+                    c->parent = parent;
+                }
+
+                // TODO(john): This erase is causing a crash.
+                gs_slot_array_erase(ctx->tab_bars, tbid);
+            }
+			else
+			{
+				gs_gui_tab_item_t* child_tab_item = &tab_bar->items[tab_bar->size];
+				child_tab_item->zindex = tab_bar->size++; 
+				child_tab_item->tab_bar = hndl; 
+
+				// Set child tab item
+				child->tab_item = child_tab_item; 
+				child->tab_item->data = child;
+			}
+
+			tab_bar->focus = child->tab_item;
+            child->rect = parent->rect; 
+            child->parent = parent;
+            tab_bar->rect = parent->rect;
+
         }
-
-        parent->split = hndl;
-        child->split = hndl;
     }
-
-    // Both have splits
     else
     { 
-        gs_println("3"); 
+        // Cache previous root splits
+        gs_gui_split_t* ps = gs_gui_get_root_split(ctx, parent); 
+        gs_gui_split_t* cs = gs_gui_get_root_split(ctx, child); 
 
-        // Get parent split
-        ps = gs_slot_array_getp(ctx->splits, parent->split); 
+        gs_gui_tab_bar_t* tab_bar = gs_gui_get_tab_bar(ctx, parent);
 
-        // Set parent id for new split to parent previous split
-        sp->parent = ps->id;
+        gs_gui_split_t split = gs_default_val();
+        split.type = split_type;       
+        split.ratio = ratio; 
+        gs_gui_split_node_t c0 = gs_default_val(); 
+        c0.type = GS_GUI_SPLIT_NODE_CONTAINER;
+        c0.container = child;
+        gs_gui_split_node_t c1 = gs_default_val();
+        c1.type = GS_GUI_SPLIT_NODE_CONTAINER;
+        c1.container = parent; 
+        split.children[GS_GUI_SPLIT_NODE_CHILD] = c0;
+        split.children[GS_GUI_SPLIT_NODE_PARENT] = c1;
+        split.rect = ps ? ps->rect : parent->rect;
+        split.prev_rect = split.rect;
 
-        // Fix up references
-        sp->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
-        sp->children[GS_GUI_SPLIT_NODE_CHILD].split = cs->id;
+        // Add new split to array
+        uint32_t hndl = gs_slot_array_insert(ctx->splits, split);
 
-        // Need to check which node to replace
-        if (ps->children[GS_GUI_SPLIT_NODE_CHILD].container == parent)
-        {
-            ps->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
-            ps->children[GS_GUI_SPLIT_NODE_CHILD].split = hndl;
+        // Get newly inserted split pointer
+        gs_gui_split_t* sp = gs_slot_array_getp(ctx->splits, hndl);
+        sp->id = hndl;
+
+        // If both parents are null, creating a new split, new nodes, assigning to children's parents
+        if (!cs && !ps)
+        { 
+            gs_println("0");
+            parent->split = hndl;
+            child->split = hndl;
+        } 
+
+        // Child has split
+        else if (cs && !ps)
+        { 
+            gs_println("1");
+            // If child has split, then the split is different...
+            sp->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
+            sp->children[GS_GUI_SPLIT_NODE_CHILD].split = cs->id;
+
+            // Child split needs to be set to this parent 
+            cs->parent = hndl;
+
+            parent->split = hndl;
         }
+
+        // Parent has split
+        else if (ps && !cs)
+        { 
+            gs_println("2"); 
+
+            // No child to tree to assign, so we can get the raw parent split here
+            ps = gs_slot_array_getp(ctx->splits, parent->split); 
+
+            // Assign parent split to previous
+            sp->parent = ps->id; 
+
+            // Fix up references
+            if (ps->children[GS_GUI_SPLIT_NODE_PARENT].container == parent)
+            {
+                ps->children[GS_GUI_SPLIT_NODE_PARENT].type = GS_GUI_SPLIT_NODE_SPLIT; 
+                ps->children[GS_GUI_SPLIT_NODE_PARENT].split = hndl;
+            }
+            else
+            {
+                ps->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT; 
+                ps->children[GS_GUI_SPLIT_NODE_CHILD].split = hndl;
+            }
+
+            parent->split = hndl;
+            child->split = hndl;
+        }
+
+        // Both have splits
         else
-        {
-            ps->children[GS_GUI_SPLIT_NODE_PARENT].type = GS_GUI_SPLIT_NODE_SPLIT;
-            ps->children[GS_GUI_SPLIT_NODE_PARENT].split = hndl;
-        }
+        { 
+            gs_println("3"); 
 
-        cs->parent = hndl;
-        parent->split = hndl;
-    } 
+            // Get parent split
+            ps = gs_slot_array_getp(ctx->splits, parent->split); 
 
-    gs_gui_split_t* root_split = gs_gui_get_root_split(ctx, parent);
-    gs_gui_update_split(ctx, root_split); 
-    gs_gui_bring_split_to_front(ctx, root_split);
+            // Set parent id for new split to parent previous split
+            sp->parent = ps->id;
+
+            // Fix up references
+            sp->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
+            sp->children[GS_GUI_SPLIT_NODE_CHILD].split = cs->id;
+
+            // Need to check which node to replace
+            if (ps->children[GS_GUI_SPLIT_NODE_CHILD].container == parent)
+            {
+                ps->children[GS_GUI_SPLIT_NODE_CHILD].type = GS_GUI_SPLIT_NODE_SPLIT;
+                ps->children[GS_GUI_SPLIT_NODE_CHILD].split = hndl;
+            }
+            else
+            {
+                ps->children[GS_GUI_SPLIT_NODE_PARENT].type = GS_GUI_SPLIT_NODE_SPLIT;
+                ps->children[GS_GUI_SPLIT_NODE_PARENT].split = hndl;
+            }
+
+            cs->parent = hndl;
+            parent->split = hndl;
+        } 
+
+        gs_gui_split_t* root_split = gs_gui_get_root_split(ctx, parent);
+        gs_gui_update_split(ctx, root_split); 
+        gs_gui_bring_split_to_front(ctx, root_split);
+    }
 }
 
-GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
-{
-    // Need to remove from split parent and fix up split tree 
-    // Oh boy... here we go 
-    // Have to free splits as well
-
-    if (!cnt->split) return;
-
-    // Get owning split
-    gs_gui_split_t* split = gs_slot_array_getp(ctx->splits, cnt->split);
+GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* cnt) 
+{ 
+    // If has a tab item idx, need to grab that
+    gs_gui_split_t* split = gs_gui_get_split(ctx, cnt);
 
     // Get root split for container
     gs_gui_split_t* root_split = NULL;
 
     // Get parent split of this owning split
-    gs_gui_split_t* ps = split->parent ? gs_slot_array_getp(ctx->splits, split->parent) : NULL;
+    gs_gui_split_t* ps = split && split->parent ? gs_slot_array_getp(ctx->splits, split->parent) : NULL;
 
-    // Rmove split reference from container
-    cnt->split = 0x00; 
+    if (cnt->tab_item)
+    {
+        // Get parent container for this container
+        gs_gui_container_t* parent = gs_gui_get_parent(ctx, cnt);
 
-    gs_gui_split_node_t* remain_node = 
-        split->children[GS_GUI_SPLIT_NODE_CHILD].container == cnt? &split->children[GS_GUI_SPLIT_NODE_PARENT]: 
-        split->children[GS_GUI_SPLIT_NODE_PARENT].container == cnt? &split->children[GS_GUI_SPLIT_NODE_CHILD] : 
-        NULL;
-
-    gs_assert(remain_node);
-
-    // Set child split in prev container split to split container parent
-    if (ps)
-    { 
-        uint32_t node_id = ps->children[GS_GUI_SPLIT_NODE_CHILD].split == split->id ? GS_GUI_SPLIT_NODE_CHILD : GS_GUI_SPLIT_NODE_PARENT; 
-        gs_gui_split_node_t* fix_node = &ps->children[node_id]; 
-        *fix_node = *remain_node;
-        switch (fix_node->type)
+        // Check if split
+        if (parent->split)
         {
-            case GS_GUI_SPLIT_NODE_CONTAINER:
-            {
-                gs_gui_container_t* remcnt = fix_node->container;    
-                remcnt->split = ps->id;
-            } break;
+            // No split, so just do stuff normally...
+            gs_gui_tab_item_t* tab_item = cnt->tab_item;
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
 
-            case GS_GUI_SPLIT_NODE_SPLIT:
+            if (tab_bar->size > 2)
             {
-                gs_gui_split_t* remsplit = gs_slot_array_getp(ctx->splits, fix_node->split);
-                remsplit->parent = ps->id;
-            } break;
+                // Get index
+                uint32_t idx = 0;
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    if (tab_bar->items[i].data == cnt)
+                    {
+                        idx = i; 
+                        break;
+                    }
+                } 
+
+                // Swap and pop with end
+                *tab_item = tab_bar->items[tab_bar->size - 1];
+
+                // Swap windows as well
+                ((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
+
+                // Set size
+                tab_bar->size--;
+
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    tab_bar->items[i].zindex = i;
+                } 
+
+                // Set focus to first window
+                tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx]; 
+
+                // Set parent for other containers
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    gs_gui_container_t* c = tab_bar->items[i].data;
+                    c->parent = tab_bar->focus->data;
+                }
+
+                // Set split for focus
+                if (parent == cnt)
+                {
+                    gs_gui_container_t* fcnt = tab_bar->focus->data;
+                    fcnt->split = parent->split;
+
+                    // Fix up split reference
+                    split = gs_slot_array_getp(ctx->splits, fcnt->split);
+                    if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container == cnt)
+                    {
+                        split->children[0].container = fcnt;
+                    }
+                    else
+                    {
+                        split->children[1].container = fcnt;
+                    }
+                }
+            }
+            // Destroy tab
+            else
+            {
+                uint32_t tbid = tab_item->tab_bar;
+
+                // Get index
+                uint32_t idx = 0;
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    if (tab_bar->items[i].data == cnt)
+                    {
+                        idx = i; 
+                        break;
+                    }
+                } 
+
+                // Swap and pop with end
+                *tab_item = tab_bar->items[tab_bar->size - 1];
+
+                // Swap windows as well
+                ((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
+
+                // Set size
+                tab_bar->size--;
+
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    tab_bar->items[i].zindex = i;
+                } 
+
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    gs_gui_container_t* fcnt = tab_bar->items[i].data;
+                    fcnt->rect = tab_bar->rect; 
+                    fcnt->tab_item = NULL;
+                    fcnt->parent = NULL;
+                    fcnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
+                }
+
+                // Fix up split reference
+                if (parent == cnt)
+                { 
+                    tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx];
+
+                    gs_assert(tab_bar->focus->data != cnt);
+
+                    gs_gui_container_t* fcnt = tab_bar->focus->data;
+                    fcnt->split = parent->split;
+
+                    // Fix up split reference
+                    split = gs_slot_array_getp(ctx->splits, fcnt->split);
+                    if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container == parent)
+                    {
+                        split->children[0].type = GS_GUI_SPLIT_NODE_CONTAINER;
+                        split->children[0].container = fcnt;
+                    }
+                    else
+                    {
+                        split->children[1].type = GS_GUI_SPLIT_NODE_CONTAINER;
+                        split->children[1].container = fcnt;
+                    } 
+                } 
+
+                gs_slot_array_erase(ctx->tab_bars, tbid);
+            }
+
+            // Remove tab index from container
+            cnt->tab_item = NULL;
+            // Remove parent
+            cnt->parent = NULL;
+            // Set split to 0
+            cnt->split = 0x00;
+
+            gs_gui_bring_to_front(ctx, cnt); 
+
+        }
+        else
+        {
+            // No split, so just do stuff normally...
+            gs_gui_tab_item_t* tab_item = cnt->tab_item;
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
+
+            // Set next available window to visible/focused and rearrange all tab item zindices
+            if (tab_bar->size > 2)
+            { 
+				uint32_t idx = 0;
+				for (uint32_t i = 0; i < tab_bar->size; ++i)
+				{
+					if (tab_bar->items[i].data == cnt)
+					{
+						idx = i; 
+						break;
+					}
+				}
+
+                // Swap and pop with end
+                *tab_item = tab_bar->items[tab_bar->size - 1];
+
+				// Swap windows as well
+				((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
+
+                // Set size
+                tab_bar->size--;
+
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    tab_bar->items[i].zindex = i;
+                }
+
+                // Set focus to first window
+                tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx]; 
+
+                // Set parent for other containers
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    gs_gui_container_t* c = tab_bar->items[i].data;
+                    c->parent = tab_bar->focus->data;
+                }
+
+            }
+            // Only 2 windows left in tab bar
+            else
+            { 
+                for (uint32_t i = 0; i < tab_bar->size; ++i)
+                {
+                    gs_gui_container_t* fcnt = tab_bar->items[i].data;
+                    fcnt->rect = tab_bar->rect; 
+                    fcnt->tab_item = NULL;
+                    fcnt->parent = NULL;
+                    fcnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
+                }
+
+                tab_bar->size = 0;
+
+                // Destroy tab bar, reset windows
+                gs_slot_array_erase(ctx->tab_bars, tab_item->tab_bar);
+            } 
+
+            // Remove tab index from container
+            cnt->tab_item = NULL;
+            // Remove parent
+            cnt->parent = NULL;
+
+            gs_gui_bring_to_front(ctx, cnt); 
+        } 
+    }
+    else
+    {
+        // Rmove split reference from container
+        cnt->split = 0x00; 
+
+        gs_gui_split_node_t* remain_node = 
+            split->children[GS_GUI_SPLIT_NODE_CHILD].container == cnt? &split->children[GS_GUI_SPLIT_NODE_PARENT]: 
+            split->children[GS_GUI_SPLIT_NODE_PARENT].container == cnt? &split->children[GS_GUI_SPLIT_NODE_CHILD] : 
+            NULL;
+
+        gs_assert(remain_node);
+
+        // Set child split in prev container split to split container parent
+        if (ps)
+        { 
+            uint32_t node_id = ps->children[GS_GUI_SPLIT_NODE_CHILD].split == split->id ? GS_GUI_SPLIT_NODE_CHILD : GS_GUI_SPLIT_NODE_PARENT; 
+            gs_gui_split_node_t* fix_node = &ps->children[node_id]; 
+            *fix_node = *remain_node;
+            switch (fix_node->type)
+            {
+                case GS_GUI_SPLIT_NODE_CONTAINER:
+                {
+                    gs_gui_container_t* remcnt = fix_node->container;    
+                    remcnt->split = ps->id;
+                } break;
+
+                case GS_GUI_SPLIT_NODE_SPLIT:
+                {
+                    gs_gui_split_t* remsplit = gs_slot_array_getp(ctx->splits, fix_node->split);
+                    remsplit->parent = ps->id;
+                } break;
+            } 
+
+            root_split = gs_gui_get_root_split_from_split(ctx, ps);
+        }
+        // Otherwise, we were root dock and have to treat that case for remaining nodes
+        else 
+        { 
+            switch (remain_node->type)
+            {
+                case GS_GUI_SPLIT_NODE_CONTAINER:
+                {
+                    gs_gui_container_t* remcnt = remain_node->container;    
+                    remcnt->rect = split->rect;
+                    remcnt->split = 0x00;
+                    root_split = gs_gui_get_root_split(ctx, remcnt);
+                } break;
+
+                case GS_GUI_SPLIT_NODE_SPLIT:
+                {
+                    gs_gui_split_t* remsplit = gs_slot_array_getp(ctx->splits, remain_node->split);
+                    remsplit->rect = split->rect;
+                    remsplit->parent = 0x00;
+                    root_split = gs_gui_get_root_split_from_split(ctx, remsplit);
+                } break;
+            }
         } 
 
-        root_split = gs_gui_get_root_split_from_split(ctx, ps);
-    }
-    // Otherwise, we were root dock and have to treat that case for remaining nodes
-    else 
-    { 
-        switch (remain_node->type)
-        {
-            case GS_GUI_SPLIT_NODE_CONTAINER:
-            {
-                gs_gui_container_t* remcnt = remain_node->container;    
-                remcnt->rect = split->rect;
-                remcnt->split = 0x00;
-                root_split = gs_gui_get_root_split(ctx, remcnt);
-            } break;
+        // Erase split
+        gs_slot_array_erase(ctx->splits, split->id); 
 
-            case GS_GUI_SPLIT_NODE_SPLIT:
-            {
-                gs_gui_split_t* remsplit = gs_slot_array_getp(ctx->splits, remain_node->split);
-                remsplit->rect = split->rect;
-                remsplit->parent = 0x00;
-                root_split = gs_gui_get_root_split_from_split(ctx, remsplit);
-            } break;
-        }
-    }
-
-    gs_println("is root: %zu", root_split == split);
-
-    // Erase split
-    gs_slot_array_erase(ctx->splits, split->id); 
-
-    // Update
-    if (root_split) gs_gui_update_split(ctx, root_split); 
-    if (root_split) gs_gui_bring_split_to_front(ctx, root_split); 
-    gs_gui_bring_to_front(ctx, cnt);
+        // Update
+        if (root_split) gs_gui_update_split(ctx, root_split); 
+        if (root_split) gs_gui_bring_split_to_front(ctx, root_split); 
+        gs_gui_bring_to_front(ctx, cnt);
+    } 
 }
 
 // ============================= //
@@ -1156,9 +1556,11 @@ GS_API_DECL void gs_gui_init(gs_gui_context_t *ctx, uint32_t window_hndl)
     ctx->_style.font = gsi_default_font();
 	ctx->style = &ctx->_style;
     ctx->window_hndl = window_hndl;
-    gs_slot_array_reserve(ctx->splits, GS_GUI_SPLIT_SIZE);
+    gs_slot_array_reserve(ctx->splits, GS_GUI_GS_GUI_SPLIT_SIZE);
     gs_gui_split_t split = gs_default_val();
     gs_slot_array_insert(ctx->splits, split); // First item is set for 0x00 invalid
+    gs_gui_tab_bar_t tb = gs_default_val();
+    gs_slot_array_insert(ctx->tab_bars, tb);
 } 
 
 static const char button_map[256] = {
@@ -1206,22 +1608,22 @@ static void gs_gui_draw_splits(gs_gui_context_t* ctx, gs_gui_split_t* split)
             {
                 case GS_GUI_SPLIT_LEFT: 
                 {
-                    r = gs_gui_rect(sr->x + sr->w * ratio - SPLIT_SIZE * 0.5f, sr->y + SPLIT_SIZE, SPLIT_SIZE, sr->h - 2.f * SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + sr->w * ratio - GS_GUI_SPLIT_SIZE * 0.5f, sr->y + GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE, sr->h - 2.f * GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_RIGHT: 
                 {
-                    r = gs_gui_rect(sr->x + sr->w * (1.f - ratio) - SPLIT_SIZE * 0.5f, sr->y + SPLIT_SIZE, SPLIT_SIZE, sr->h - 2.f * SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + sr->w * (1.f - ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->y + GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE, sr->h - 2.f * GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_TOP:
                 {
-                    r = gs_gui_rect(sr->x + SPLIT_SIZE, sr->y + sr->h * (ratio) - SPLIT_SIZE * 0.5f, sr->w - 2.f * SPLIT_SIZE, SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + GS_GUI_SPLIT_SIZE, sr->y + sr->h * (ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->w - 2.f * GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_BOTTOM:
                 {
-                    r = gs_gui_rect(sr->x + SPLIT_SIZE, sr->y + sr->h * (1.f - ratio) - SPLIT_SIZE * 0.5f, sr->w - 2.f * SPLIT_SIZE, SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + GS_GUI_SPLIT_SIZE, sr->y + sr->h * (1.f - ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->w - 2.f * GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE);
                 } break;
             }
 
@@ -1237,8 +1639,10 @@ static void gs_gui_draw_splits(gs_gui_context_t* ctx, gs_gui_split_t* split)
             if (active)
             {
                 ctx->next_hover_root = top;
-                ctx->split_request.type = GS_GUI_SPLIT_RATIO;
-                ctx->split_request.split = split;
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_SPLIT_RATIO;
+                req.split = split;
+                gs_dyn_array_push(ctx->requests, req);
             }
             if (
                 (hover && (ctx->focus_split == split)) || 
@@ -1257,22 +1661,22 @@ static void gs_gui_draw_splits(gs_gui_context_t* ctx, gs_gui_split_t* split)
             {
                 case GS_GUI_SPLIT_LEFT: 
                 {
-                    r = gs_gui_rect(sr->x + sr->w * ratio - SPLIT_SIZE * 0.5f, sr->y + SPLIT_SIZE, SPLIT_SIZE, sr->h - 2.f * SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + sr->w * ratio - GS_GUI_SPLIT_SIZE * 0.5f, sr->y + GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE, sr->h - 2.f * GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_RIGHT: 
                 {
-                    r = gs_gui_rect(sr->x + sr->w * (1.f - ratio) - SPLIT_SIZE * 0.5f, sr->y + SPLIT_SIZE, SPLIT_SIZE, sr->h - 2.f * SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + sr->w * (1.f - ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->y + GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE, sr->h - 2.f * GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_TOP:
                 {
-                    r = gs_gui_rect(sr->x + SPLIT_SIZE, sr->y + sr->h * (ratio) - SPLIT_SIZE * 0.5f, sr->w - 2.f * SPLIT_SIZE, SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + GS_GUI_SPLIT_SIZE, sr->y + sr->h * (ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->w - 2.f * GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE);
                 } break;
 
                 case GS_GUI_SPLIT_BOTTOM:
                 {
-                    r = gs_gui_rect(sr->x + SPLIT_SIZE, sr->y + sr->h * (1.f - ratio) - SPLIT_SIZE * 0.5f, sr->w - 2.f * SPLIT_SIZE, SPLIT_SIZE);
+                    r = gs_gui_rect(sr->x + GS_GUI_SPLIT_SIZE, sr->y + sr->h * (1.f - ratio) - GS_GUI_SPLIT_SIZE * 0.5f, sr->w - 2.f * GS_GUI_SPLIT_SIZE, GS_GUI_SPLIT_SIZE);
                 } break;
             } 
 
@@ -1287,8 +1691,10 @@ static void gs_gui_draw_splits(gs_gui_context_t* ctx, gs_gui_split_t* split)
             if (active)
             {
                 ctx->next_hover_root = top;
-                ctx->split_request.type = GS_GUI_SPLIT_RATIO;
-                ctx->split_request.split = split;
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_SPLIT_RATIO;
+                req.split = split;
+                gs_dyn_array_push(ctx->requests, req);
             }
             if (
                 (hover && (ctx->focus_split == split)) || 
@@ -1314,16 +1720,40 @@ static void gs_gui_get_split_lowest_zindex(gs_gui_context_t* ctx, gs_gui_split_t
     if (!split) return;
 
     if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container->zindex < *index)
-        *index = split->children[0].container->zindex;
+    {
+        *index = split->children[0].container->zindex; 
+    }
+    if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container->tab_item)
+    {
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[0].container->tab_item->tab_bar); 
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
+        {
+            if (((gs_gui_container_t*)tab_bar->items[i].data)->zindex < *index) *index = ((gs_gui_container_t*)tab_bar->items[i].data)->zindex;
+        }
+    }
 
     if (split->children[1].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[1].container->zindex < *index)
+    {
         *index = split->children[1].container->zindex;
+    }
+    if (split->children[1].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[1].container->tab_item)
+    {
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[1].container->tab_item->tab_bar); 
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
+        {
+            if (((gs_gui_container_t*)tab_bar->items[i].data)->zindex < *index) *index = ((gs_gui_container_t*)tab_bar->items[i].data)->zindex;
+        }
+    }
 
     if (split->children[0].type == GS_GUI_SPLIT_NODE_SPLIT)
+    {
         gs_gui_get_split_lowest_zindex(ctx, gs_slot_array_getp(ctx->splits, split->children[0].split), index);
+    }
 
     if (split->children[1].type == GS_GUI_SPLIT_NODE_SPLIT)
+    {
         gs_gui_get_split_lowest_zindex(ctx, gs_slot_array_getp(ctx->splits, split->children[1].split), index);
+    }
 }
 
 GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx) 
@@ -1469,7 +1899,7 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                 ds->zindex = zindex - 1;
 
                 gs_gui_rect_t fr = split->rect;
-                fr.x += SPLIT_SIZE; fr.y += SPLIT_SIZE; fr.w -= 2.f * SPLIT_SIZE; fr.h -= 2.f * SPLIT_SIZE;
+                fr.x += GS_GUI_SPLIT_SIZE; fr.y += GS_GUI_SPLIT_SIZE; fr.w -= 2.f * GS_GUI_SPLIT_SIZE; fr.h -= 2.f * GS_GUI_SPLIT_SIZE;
 		        ctx->draw_frame(ctx, fr, GS_GUI_COLOR_WINDOWBG);
 
                 // Draw splits
@@ -1484,7 +1914,7 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                 // W
                 {
                     // Cache rect
-                    gs_gui_rect_t lr = gs_gui_rect(fr.x - 2.f * SPLIT_SIZE, fr.y, SPLIT_SIZE, fr.h); 
+                    gs_gui_rect_t lr = gs_gui_rect(fr.x - 2.f * GS_GUI_SPLIT_SIZE, fr.y, GS_GUI_SPLIT_SIZE, fr.h); 
                     gs_gui_rect_t ex = lr; 
                     ex.x -= 10.f; ex.w += 20.f;
                     gs_gui_id id = gs_gui_get_id(ctx, "!hov_l", 6);
@@ -1494,15 +1924,17 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                     {
                         gs_gui_draw_control_frame(ctx, id, lr, GS_GUI_COLOR_BUTTON, 0x00);
                         ctx->next_hover_root = top;
-                        ctx->split_request.type = GS_GUI_SPLIT_RESIZE_W;
-                        ctx->split_request.split = split;
+                        gs_gui_request_t req = gs_default_val();
+                        req.type = GS_GUI_SPLIT_RESIZE_W;
+                        req.split = split;
+                        gs_dyn_array_push(ctx->requests, req);
                     } 
                 }
                 
                 // E
                 {
                     // Cache rect
-                    gs_gui_rect_t rr = gs_gui_rect(fr.x + fr.w + SPLIT_SIZE, fr.y, SPLIT_SIZE, fr.h); 
+                    gs_gui_rect_t rr = gs_gui_rect(fr.x + fr.w + GS_GUI_SPLIT_SIZE, fr.y, GS_GUI_SPLIT_SIZE, fr.h); 
                     gs_gui_rect_t ex = rr; 
                     ex.w += 20.f; 
                     gs_gui_id id = gs_gui_get_id(ctx, "!hov_r", 6);
@@ -1512,15 +1944,17 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                     {
                         gs_gui_draw_control_frame(ctx, id, rr, GS_GUI_COLOR_BUTTON, 0x00);
                         ctx->next_hover_root = top;
-                        ctx->split_request.type = GS_GUI_SPLIT_RESIZE_E;
-                        ctx->split_request.split = split;
+                        gs_gui_request_t req = gs_default_val();
+                        req.type = GS_GUI_SPLIT_RESIZE_E;
+                        req.split = split;
+                        gs_dyn_array_push(ctx->requests, req);
                     } 
                 }
 
                 // N
                 {
                     // Cache rect
-                    gs_gui_rect_t tr = gs_gui_rect(fr.x, fr.y - 2.f * SPLIT_SIZE, fr.w, SPLIT_SIZE); 
+                    gs_gui_rect_t tr = gs_gui_rect(fr.x, fr.y - 2.f * GS_GUI_SPLIT_SIZE, fr.w, GS_GUI_SPLIT_SIZE); 
                     gs_gui_rect_t ex = tr; 
                     ex.y -= 10.f; 
                     ex.h += 20.f; 
@@ -1531,15 +1965,17 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                     {
                         gs_gui_draw_control_frame(ctx, id, tr, GS_GUI_COLOR_BUTTON, 0x00);
                         ctx->next_hover_root = top;
-                        ctx->split_request.type = GS_GUI_SPLIT_RESIZE_N;
-                        ctx->split_request.split = split;
+                        gs_gui_request_t req = gs_default_val();
+                        req.type = GS_GUI_SPLIT_RESIZE_N;
+                        req.split = split;
+                        gs_dyn_array_push(ctx->requests, req);
                     } 
                 }
 
                 // S
                 {
                     // Cache rect
-                    gs_gui_rect_t br = gs_gui_rect(fr.x, fr.y + fr.h + SPLIT_SIZE, fr.w, SPLIT_SIZE); 
+                    gs_gui_rect_t br = gs_gui_rect(fr.x, fr.y + fr.h + GS_GUI_SPLIT_SIZE, fr.w, GS_GUI_SPLIT_SIZE); 
                     gs_gui_rect_t ex = br; 
                     ex.h += 20.f; 
                     gs_gui_id id = gs_gui_get_id(ctx, "!hov_b", 6);
@@ -1549,8 +1985,10 @@ GS_API_DECL void gs_gui_begin(gs_gui_context_t* ctx)
                     {
                         gs_gui_draw_control_frame(ctx, id, br, GS_GUI_COLOR_BUTTON, 0x00);
                         ctx->next_hover_root = top;
-                        ctx->split_request.type = GS_GUI_SPLIT_RESIZE_S;
-                        ctx->split_request.split = split;
+                        gs_gui_request_t req = gs_default_val();
+                        req.type = GS_GUI_SPLIT_RESIZE_S;
+                        req.split = split;
+                        gs_dyn_array_push(ctx->requests, req);
                     } 
                 }
             }
@@ -1570,6 +2008,8 @@ static void gs_gui_docking(gs_gui_context_t* ctx)
     {
         gs_gui_undock_ex_cnt(ctx, ctx->undock_root);
     }
+
+	if (!ctx->focus_root) return; 
 
     if (ctx->dockable_root || ctx->prev_dockable_root)
     { 
@@ -1594,19 +2034,37 @@ static void gs_gui_docking(gs_gui_context_t* ctx)
         gs_gui_rect_t top    = gs_gui_rect(c.x, c.y - off, sz, sz); 
         gs_gui_rect_t bottom = gs_gui_rect(c.x, c.y + off, sz, sz); 
 
-        int32_t hov_c = gs_gui_rect_overlaps_vec2(center, ctx->mouse_pos); 
+        int32_t hov_c = (gs_gui_rect_overlaps_vec2(center, ctx->mouse_pos)); 
         int32_t hov_l = gs_gui_rect_overlaps_vec2(left, ctx->mouse_pos); 
         int32_t hov_r = gs_gui_rect_overlaps_vec2(right, ctx->mouse_pos); 
         int32_t hov_t = gs_gui_rect_overlaps_vec2(top, ctx->mouse_pos); 
         int32_t hov_b = gs_gui_rect_overlaps_vec2(bottom, ctx->mouse_pos); 
 
+        bool can_dock = true;
+        if (ctx->focus_root->tab_item)
+        {
+			gs_gui_container_t* tcmp = ctx->dockable_root ? ctx->dockable_root : ctx->prev_dockable_root;
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, ctx->focus_root->tab_item->tab_bar);
+            for (uint32_t i = 0; i < tab_bar->size; ++i)
+            {
+				gs_gui_container_t* tcnt = (gs_gui_container_t*)tab_bar->items[i].data;
+                if (tcnt == tcmp)
+                {
+                    can_dock = false;
+                }
+            }
+        }
+
         // Need to make sure you CAN dock here first
-        if (ctx->dockable_root)
+        if (ctx->dockable_root && can_dock)
         { 
             // Need to now grab overlay draw list, then draw rects into it
             gs_immediate_draw_t* dl = &ctx->overlay_draw_list; 
 
-            gsi_rectvd(dl, gs_v2(center.x, center.y), gs_v2(center.w, center.h), gs_v2s(0.f), gs_v2s(1.f), hov_c ? hov_col : def_col, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
+            if (!ctx->focus_root->split)
+            {
+                gsi_rectvd(dl, gs_v2(center.x, center.y), gs_v2(center.w, center.h), gs_v2s(0.f), gs_v2s(1.f), hov_c ? hov_col : def_col, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
+            }
             gsi_rectvd(dl, gs_v2(left.x, left.y), gs_v2(left.w, left.h), gs_v2s(0.f), gs_v2s(1.f), hov_l ? hov_col : def_col, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
             gsi_rectvd(dl, gs_v2(right.x, right.y), gs_v2(right.w, right.h), gs_v2s(0.f), gs_v2s(1.f), hov_r ? hov_col : def_col, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
             gsi_rectvd(dl, gs_v2(top.x, top.y), gs_v2(top.w, top.h), gs_v2s(0.f), gs_v2s(1.f), hov_t ? hov_col : def_col, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
@@ -1615,7 +2073,7 @@ static void gs_gui_docking(gs_gui_context_t* ctx)
             const float d = 0.5f;
             const float hs = sz * 0.5f; 
 
-            if (hov_c)
+            if (hov_c && !ctx->focus_root->split)
             {
                 center = gs_gui_rect(cnt->rect.x, cnt->rect.y, cnt->rect.w, cnt->rect.h);
                 gsi_rectvd(dl, gs_v2(center.x, center.y), gs_v2(center.w, center.h), gs_v2s(0.f), gs_v2s(1.f), hov_col, GS_GRAPHICS_PRIMITIVE_LINES);
@@ -1653,11 +2111,11 @@ static void gs_gui_docking(gs_gui_context_t* ctx)
             gs_gui_container_t* parent = ctx->prev_dockable_root;
             gs_gui_container_t* child = ctx->focus_root; 
 
-            if (hov_c)      gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_TAB, 0.5f);
-            else if (hov_l) gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_LEFT, 0.5f);
-            else if (hov_r) gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_RIGHT, 0.5f);
-            else if (hov_t) gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_TOP, 0.5f);
-            else if (hov_b) gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_BOTTOM, 0.5f);
+            if (hov_c && !ctx->focus_root->split)   gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_TAB, 0.5f);
+            else if (hov_l)                         gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_LEFT, 0.5f);
+            else if (hov_r)                         gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_RIGHT, 0.5f);
+            else if (hov_t)                         gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_TOP, 0.5f);
+            else if (hov_b)                         gs_gui_dock_ex_cnt(ctx, child, parent, GS_GUI_SPLIT_BOTTOM, 0.5f);
         } 
     } 
 }
@@ -1669,121 +2127,243 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
     // Check for docking, draw overlays
     gs_gui_docking(ctx);
 
-    // If split moved, update position for next frame
-    switch (ctx->split_request.type)
-    {
-        case GS_GUI_SPLIT_MOVE:
-        {
-            if (ctx->split_request.split)
-            {
-                ctx->split_request.split->rect.x += ctx->mouse_delta.x;
-                ctx->split_request.split->rect.y += ctx->mouse_delta.y; 
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
+    for (uint32_t r = 0; r < gs_dyn_array_size(ctx->requests); ++r)
+    { 
+        const gs_gui_request_t* req = &ctx->requests[r];
 
-        } break;
-
-        case GS_GUI_SPLIT_RESIZE_SE: 
+        // If split moved, update position for next frame
+        switch (req->type)
         {
-            if (ctx->split_request.split)
+            case GS_GUI_CNT_MOVE:
             {
-                gs_gui_rect_t* r = &ctx->split_request.split->rect;
-                r->w = gs_max(r->w + ctx->mouse_delta.x, 40);
-                r->h = gs_max(r->h + ctx->mouse_delta.y, 40);
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
-        } break; 
-
-        case GS_GUI_SPLIT_RESIZE_W: 
-        {
-            if (ctx->split_request.split)
-            {
-                gs_gui_rect_t* r = &ctx->split_request.split->rect;
-                float w = r->w;
-                float max_x = r->x + r->w;
-                r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
-                if (fabsf(r->w - w) > 0.f)
+                if (req->cnt)
                 {
-                    r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                    req->cnt->rect.x += ctx->mouse_delta.x;
+                    req->cnt->rect.y += ctx->mouse_delta.y;
+
+                    if (req->cnt->tab_item)
+                    {
+                        gs_gui_tab_bar_t* tb = gs_slot_array_getp(ctx->tab_bars, req->cnt->tab_item->tab_bar);
+                        gs_assert(tb);
+                        tb->rect.x += ctx->mouse_delta.x;
+                        tb->rect.y += ctx->mouse_delta.y;
+                    }
+                } 
+            } break;
+
+            case GS_GUI_CNT_FOCUS:
+            {
+                if (!req->cnt) break;
+
+                gs_gui_container_t* cnt = (gs_gui_container_t*)req->cnt;
+                gs_assert(cnt);
+
+                gs_gui_split_t* rs = gs_gui_get_root_split(ctx, cnt);
+
+                if (cnt->tab_item)
+                {
+                    if (rs)
+                    {
+                        gs_gui_bring_split_to_front(ctx, rs);
+                    }
+
+                    gs_gui_tab_item_t* tab_item = cnt->tab_item;
+                    gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
+                    gs_gui_container_t* fcnt = (gs_gui_container_t*)tab_bar->focus->data;
+                    fcnt->opt |= GS_GUI_OPT_NOHOVER;
+                    fcnt->opt |= GS_GUI_OPT_NOINTERACT; 
+                    fcnt->flags &= ~GS_GUI_WINDOW_FLAGS_VISIBLE;
+                    tab_bar->focus = tab_item; 
+                    cnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
+
+                    // Bring all tab items to front
+                    for (uint32_t i = 0; i < tab_bar->size; ++i)
+                    {
+                        gs_gui_bring_to_front(ctx, tab_bar->items[i].data); 
+                    }
+                    gs_gui_bring_to_front(ctx, cnt); 
+                } 
+
+            } break;
+
+            case GS_GUI_SPLIT_MOVE:
+            {
+                if (req->split)
+                {
+                    req->split->rect.x += ctx->mouse_delta.x;
+                    req->split->rect.y += ctx->mouse_delta.y; 
+                    gs_gui_update_split(ctx, req->split);
                 }
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
-        } break; 
 
-        case GS_GUI_SPLIT_RESIZE_E: 
-        {
-            if (ctx->split_request.split)
-            {
-                gs_gui_rect_t* r = &ctx->split_request.split->rect;
-                r->w = gs_max(r->w + ctx->mouse_delta.x, 40); 
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
-        } break; 
+            } break;
 
-        case GS_GUI_SPLIT_RESIZE_N: 
-        {
-            if (ctx->split_request.split)
+            case GS_GUI_SPLIT_RESIZE_SE: 
             {
-                gs_gui_rect_t* r = &ctx->split_request.split->rect;
-                float h = r->h;
-                float max_y = h + r->y;
-                r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
-                if (fabsf(r->h - h) > 0.f)
+                if (req->split)
                 {
-                    r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                    gs_gui_rect_t* r = &req->split->rect;
+                    r->w = gs_max(r->w + ctx->mouse_delta.x, 40);
+                    r->h = gs_max(r->h + ctx->mouse_delta.y, 40);
+                    gs_gui_update_split(ctx, req->split);
                 }
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
-        } break; 
+            } break; 
 
-        case GS_GUI_SPLIT_RESIZE_S: 
-        {
-            if (ctx->split_request.split)
+            case GS_GUI_SPLIT_RESIZE_W: 
             {
-                gs_gui_rect_t* r = &ctx->split_request.split->rect;
-                r->h = gs_max(r->h + ctx->mouse_delta.y, 40); 
-                gs_gui_update_split(ctx, ctx->split_request.split);
-            }
-        } break; 
+                if (req->split)
+                {
+                    gs_gui_rect_t* r = &req->split->rect;
+                    float w = r->w;
+                    float max_x = r->x + r->w;
+                    r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                    if (fabsf(r->w - w) > 0.f)
+                    {
+                        r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                    }
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
 
-        case GS_GUI_SPLIT_RATIO:
-        {
-            const float smin = 0.05f; 
-            const float smax = 1.f - smin; 
-            gs_gui_split_t* split = ctx->split_request.split;
-
-            switch (split->type)
+            case GS_GUI_SPLIT_RESIZE_E: 
             {
-                case GS_GUI_SPLIT_LEFT:
+                if (req->split)
                 {
-                    split->ratio = gs_clamp(split->ratio + ctx->mouse_delta.x / split->rect.w, smin, smax);
-                    gs_gui_update_split(ctx, split);
-                } break;
+                    gs_gui_rect_t* r = &req->split->rect;
+                    r->w = gs_max(r->w + ctx->mouse_delta.x, 40); 
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
 
-                case GS_GUI_SPLIT_RIGHT:
+            case GS_GUI_SPLIT_RESIZE_N: 
+            {
+                if (req->split)
                 {
-                    split->ratio = gs_clamp(split->ratio - ctx->mouse_delta.x / split->rect.w, smin, smax);
-                    gs_gui_update_split(ctx, split);
-                } break; 
+                    gs_gui_rect_t* r = &req->split->rect;
+                    float h = r->h;
+                    float max_y = h + r->y;
+                    r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                    if (fabsf(r->h - h) > 0.f)
+                    {
+                        r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                    }
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
 
-                case GS_GUI_SPLIT_TOP:
+            case GS_GUI_SPLIT_RESIZE_NE: 
+            {
+                if (req->split)
                 {
-                    split->ratio = gs_clamp(split->ratio + ctx->mouse_delta.y / split->rect.h, smin, smax);
-                    gs_gui_update_split(ctx, split);
-                } break; 
+                    gs_gui_rect_t* r = &req->split->rect; 
+                    r->w = gs_max(r->w + ctx->mouse_delta.x, 40); 
+                    float h = r->h;
+                    float max_y = h + r->y;
+                    r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                    if (fabsf(r->h - h) > 0.f)
+                    {
+                        r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                    }
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
 
-                case GS_GUI_SPLIT_BOTTOM:
+            case GS_GUI_SPLIT_RESIZE_NW: 
+            {
+                if (req->split)
                 {
-                    split->ratio = gs_clamp(split->ratio - ctx->mouse_delta.y / split->rect.h, smin, smax);
-                    gs_gui_update_split(ctx, split);
-                } break; 
-            }
+                    gs_gui_rect_t* r = &req->split->rect; 
+                    float h = r->h;
+                    float max_y = h + r->y;
+                    r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                    if (fabsf(r->h - h) > 0.f)
+                    {
+                        r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                    }
 
-            // Bring to font
-            gs_gui_bring_split_to_front(ctx, gs_gui_get_root_split_from_split(ctx, split));
+                    float w = r->w;
+                    float max_x = r->x + r->w;
+                    r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                    if (fabsf(r->w - w) > 0.f)
+                    {
+                        r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                    }
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
 
-        } break;
-    } 
+            case GS_GUI_SPLIT_RESIZE_S: 
+            {
+                if (req->split)
+                {
+                    gs_gui_rect_t* r = &req->split->rect;
+                    r->h = gs_max(r->h + ctx->mouse_delta.y, 40); 
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
+
+            case GS_GUI_SPLIT_RESIZE_SW: 
+            {
+                if (req->split)
+                {
+                    gs_gui_rect_t* r = &req->split->rect;
+                    float h = r->h;
+                    float max_y = h + r->y;
+                    r->h = gs_max(r->h + ctx->mouse_delta.y, 40); 
+
+                    float w = r->w;
+                    float max_x = r->x + r->w;
+                    r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                    if (fabsf(r->w - w) > 0.f)
+                    {
+                        r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                    }
+                    gs_gui_update_split(ctx, req->split);
+                }
+            } break; 
+
+
+            case GS_GUI_SPLIT_RATIO:
+            {
+                const float smin = 0.05f; 
+                const float smax = 1.f - smin; 
+                gs_gui_split_t* split = req->split;
+
+                switch (split->type)
+                {
+                    case GS_GUI_SPLIT_LEFT:
+                    {
+                        split->ratio = gs_clamp(split->ratio + ctx->mouse_delta.x / split->rect.w, smin, smax);
+                        gs_gui_update_split(ctx, split);
+                    } break;
+
+                    case GS_GUI_SPLIT_RIGHT:
+                    {
+                        split->ratio = gs_clamp(split->ratio - ctx->mouse_delta.x / split->rect.w, smin, smax);
+                        gs_gui_update_split(ctx, split);
+                    } break; 
+
+                    case GS_GUI_SPLIT_TOP:
+                    {
+                        split->ratio = gs_clamp(split->ratio + ctx->mouse_delta.y / split->rect.h, smin, smax);
+                        gs_gui_update_split(ctx, split);
+                    } break; 
+
+                    case GS_GUI_SPLIT_BOTTOM:
+                    {
+                        split->ratio = gs_clamp(split->ratio - ctx->mouse_delta.y / split->rect.h, smin, smax);
+                        gs_gui_update_split(ctx, split);
+                    } break; 
+                }
+
+                // Bring to font
+                gs_gui_bring_split_to_front(ctx, gs_gui_get_root_split_from_split(ctx, split));
+
+            } break;
+        } 
+    }
+
+    // Clear reqests
+    gs_dyn_array_clear(ctx->requests);
 
 	// Check stacks	
     gs_gui_expect(ctx->container_stack.idx == 0);
@@ -1828,8 +2408,12 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
 	ctx->mouse_pressed = 0;
 	ctx->scroll_delta = gs_v2(0, 0);
 	ctx->last_mouse_pos = ctx->mouse_pos; 
-    ctx->split_request.type = 0x00;
     ctx->undock_root = NULL;
+
+    if (ctx->mouse_down != GS_GUI_MOUSE_LEFT)
+    {
+        gs_platform_set_cursor(ctx->window_hndl, GS_PLATFORM_CURSOR_ARROW);
+    }
 
 	// Sort root containers by zindex 
 	n = ctx->root_list.idx;
@@ -2010,6 +2594,16 @@ GS_API_DECL gs_gui_container_t* gs_gui_get_container(gs_gui_context_t* ctx, cons
 GS_API_DECL void gs_gui_bring_to_front(gs_gui_context_t* ctx, gs_gui_container_t* cnt) 
 {
 	cnt->zindex = ++ctx->last_zindex;
+
+    // If container is part of a tab item, then iterate and bring to front as well
+    if (cnt->tab_item)
+    {
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar);
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
+        {
+            ((gs_gui_container_t*)tab_bar->items[i].data)->zindex = ++ctx->last_zindex;
+        }
+    }
 } 
 
 /*============================================================================
@@ -2410,6 +3004,7 @@ GS_API_DECL int32_t gs_gui_mouse_over(gs_gui_context_t *ctx, gs_gui_rect_t rect)
 GS_API_DECL void gs_gui_update_control(gs_gui_context_t *ctx, gs_gui_id id, gs_gui_rect_t rect, int32_t opt) 
 { 
     int32_t mouseover = 0;
+    gs_immediate_draw_t* dl = &ctx->overlay_draw_list; 
 
     if (opt & GS_GUI_OPT_FORCEFOCUS)
     {
@@ -2432,6 +3027,8 @@ GS_API_DECL void gs_gui_update_control(gs_gui_context_t *ctx, gs_gui_id id, gs_g
 
 	if (ctx->hover == id) 
     {
+        // gsi_rectvd(dl, gs_v2(rect.x, rect.y), gs_v2(rect.w, rect.h), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_RED, GS_GRAPHICS_PRIMITIVE_LINES);
+
 		if (ctx->mouse_pressed) 
         {
 			gs_gui_set_focus(ctx, id);
@@ -2441,6 +3038,11 @@ GS_API_DECL void gs_gui_update_control(gs_gui_context_t *ctx, gs_gui_id id, gs_g
 			ctx->hover = 0;
 		}
 	}
+
+    if (ctx->focus == id)
+    {
+        // gsi_rectvd(dl, gs_v2(rect.x, rect.y), gs_v2(rect.w, rect.h), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_GREEN, GS_GRAPHICS_PRIMITIVE_LINES);
+    }
 } 
 
 GS_API_DECL void gs_gui_text(gs_gui_context_t *ctx, const char *text, int32_t wrap)
@@ -2814,113 +3416,74 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 	gs_gui_rect_t body;
 	gs_gui_id id = gs_gui_get_id(ctx, title, strlen(title)); 
 	gs_gui_container_t* cnt = gs_gui_get_container_ex(ctx, id, opt);
-	cnt->opt = opt; 
 
-    const float split_size = SPLIT_SIZE;
+    const int32_t title_max_size = 100;
+
+    bool new_frame = cnt->frame != ctx->frame;
+
+    const float split_size = GS_GUI_SPLIT_SIZE;
 
 	if (!cnt || !cnt->open) 
     {
         return 0;
-    }
+    } 
 
 	gs_gui_stack_push(ctx->id_stack, id); 
 
     // Cache rect
-	if (cnt->rect.w == 0.f || opt & GS_GUI_OPT_FORCESETRECT) {cnt->rect = rect;}
+	if ((cnt->rect.w == 0.f || opt & GS_GUI_OPT_FORCESETRECT) && new_frame) {cnt->rect = rect;}
 	gs_gui_begin_root_container(ctx, cnt, opt);
 	rect = body = cnt->rect;
 
-    // Cache splits
-    gs_gui_split_t* split = cnt->split ? gs_slot_array_getp(ctx->splits, cnt->split) : NULL;
+    // If in a tab view, then title has to be handled differently...
+    gs_gui_tab_item_t* tab_item = cnt->tab_item ? cnt->tab_item : NULL;
+    gs_gui_tab_bar_t* tab_bar = tab_item ? gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar) : NULL; 
+
+    // Get splits
+    gs_gui_split_t* split = gs_gui_get_split(ctx, cnt); 
     gs_gui_split_t* root_split = gs_gui_get_root_split(ctx, cnt); 
 
-    // Calculate movement
-    if (~opt & GS_GUI_OPT_NOTITLE)
+    if (tab_item && tab_item)
     {
-        gs_gui_rect_t* rp = root_split ? &root_split->rect : &cnt->rect; 
-
-        // Cache rect
-		gs_gui_rect_t tr = cnt->rect;
-		tr.h = ctx->style->title_height;
-        tr.x += split_size;
-        gs_gui_id id = gs_gui_get_id(ctx, "!title", 6);
-        gs_gui_update_control(ctx, id, tr, opt); 
-
-        // Need to move the entire thing
-        if (id == ctx->focus && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+        if (tab_bar->focus == tab_item) 
         {
-            ctx->next_focus_root = cnt; 
-            if (root_split)
-            {
-                ctx->split_request.type = GS_GUI_SPLIT_MOVE;
-                ctx->split_request.split = root_split;
-            }
-            else
-            {
-                cnt->rect.x += ctx->mouse_delta.x;
-                cnt->rect.y += ctx->mouse_delta.y; 
-            }
+            cnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
+            opt &= !GS_GUI_OPT_NOINTERACT; 
+            opt &= !GS_GUI_OPT_NOHOVER; 
         }
-
-        // Tab
-        { 
-            int32_t tw = ctx->text_width(ctx->style->font, title, -1);
-			id = gs_gui_get_id(ctx, "!split_tab", 10);
-            const float hp = 0.8f;
-            tr.x += split_size;
-            float h = tr.h * hp;
-            float y = tr.y + tr.h * (1.f - hp);
-			gs_gui_rect_t r = gs_gui_rect(tr.x + split_size, y, tw + 15.f, h);
-            gs_gui_update_control(ctx, id, r, opt); 
-        }
-
-        // Need to move the entire thing
-        if (id == ctx->focus && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+        else
         {
-            ctx->next_focus_root = cnt; 
-            if (root_split)
-            {
-                // Handle break out
-                if (ctx->mouse_pos.y < tr.y || ctx->mouse_pos.y > tr.y + tr.h)
-                { 
-                    ctx->undock_root = cnt;
-                } 
-            }
-            else
-            {
-                cnt->rect.x += ctx->mouse_delta.x;
-                cnt->rect.y += ctx->mouse_delta.y; 
-            }
+            cnt->flags &= ~GS_GUI_WINDOW_FLAGS_VISIBLE;
+            opt |= GS_GUI_OPT_NOINTERACT; 
+            opt |= GS_GUI_OPT_NOHOVER; 
         }
     } 
 
-    // Control frame for body movement
-    if (~opt & GS_GUI_OPT_NOMOVE)
+    bool in_root = false;
+
+    // If hovered root is in the tab group and moused over, then is hovered 
+    if (tab_bar)
     {
-        // Cache rect
-		gs_gui_rect_t br = cnt->rect;
-
-        if (~opt & GS_GUI_OPT_NOTITLE) 
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
         {
-            br.y += ctx->style->title_height;
-            br.h -= ctx->style->title_height;
-        }
-        gs_gui_id id = gs_gui_get_id(ctx, "!body", 5);
-        gs_gui_update_control(ctx, id, br, opt); 
-
-        // Need to move the entire thing
-        if (id == ctx->focus && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
-        {
-            ctx->next_focus_root = cnt; 
-            if (root_split)
+            if (ctx->hover_root == (gs_gui_container_t*)tab_bar->items[i].data)
             {
-                ctx->split_request.type = GS_GUI_SPLIT_MOVE;
-                ctx->split_request.split = root_split;
+                in_root = true;
+                break;
             }
-            else
+        }
+    }
+
+	cnt->opt = opt; 
+
+    gs_gui_container_t* s_cnt = cnt;  
+    if (tab_bar && split)
+    {
+        for (uint32_t i = 0; i < tab_bar->size; ++i)
+        {
+            if (((gs_gui_container_t*)tab_bar->items[i].data)->split)
             {
-                cnt->rect.x += ctx->mouse_delta.x;
-                cnt->rect.y += ctx->mouse_delta.y; 
+                s_cnt = tab_bar->items[i].data;
             }
         }
     }
@@ -2937,7 +3500,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
         {
             case GS_GUI_SPLIT_LEFT:
             {
-                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == cnt)
+                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == s_cnt)
                 { 
                     cnt->rect = gs_gui_rect(sr->x + shsz, sr->y + shsz, sr->w * ratio - 2.f * shsz, sr->h - 2.f * shsz); 
                 }
@@ -2950,7 +3513,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
             case GS_GUI_SPLIT_RIGHT:
             {
-                if (split->children[GS_GUI_SPLIT_NODE_PARENT].container == cnt)
+                if (split->children[GS_GUI_SPLIT_NODE_PARENT].container == s_cnt)
                 { 
                     cnt->rect = gs_gui_rect(sr->x + shsz, sr->y + shsz, sr->w * (1.f - ratio) - 2.f * shsz, sr->h - 2.f * shsz); 
                 }
@@ -2962,7 +3525,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
             case GS_GUI_SPLIT_TOP:
             {
-                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == cnt)
+                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == s_cnt)
                 {
                     cnt->rect = gs_gui_rect(sr->x + shsz, sr->y + shsz, sr->w - 2.f * shsz, sr->h * ratio - 2.f * shsz); 
                 }
@@ -2974,7 +3537,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
             case GS_GUI_SPLIT_BOTTOM:
             { 
-                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == cnt)
+                if (split->children[GS_GUI_SPLIT_NODE_CHILD].container == s_cnt)
                 {
                     cnt->rect = gs_gui_rect(sr->x + shsz, sr->y + sr->h * (1.f - ratio) + shsz, sr->w - 2.f * shsz, sr->h * (ratio) - 2.f * shsz);
                 }
@@ -2985,6 +3548,189 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
             } break;
         }
     } 
+
+    // Calculate movement
+    if (~opt & GS_GUI_OPT_NOTITLE && new_frame)
+    {
+        gs_gui_rect_t* rp = root_split ? &root_split->rect : &cnt->rect; 
+
+        // Cache rect
+		gs_gui_rect_t tr = cnt->rect;
+		tr.h = ctx->style->title_height;
+        tr.x += split_size;
+        gs_gui_id id = gs_gui_get_id(ctx, "!title", 6); 
+        gs_gui_update_control(ctx, id, tr, opt); 
+
+        // Need to move the entire thing
+        if ((id == ctx->focus || id == ctx->hover) && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+        { 
+            if (tab_bar)
+            {
+                ctx->next_focus_root = (gs_gui_container_t*)(tab_bar->focus->data);
+                gs_gui_bring_to_front(ctx, tab_bar->focus->data);
+            }
+            else
+            {
+                ctx->next_focus_root = cnt; 
+            }
+
+            if (root_split)
+            {
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_SPLIT_MOVE;
+                req.split = root_split;
+                gs_dyn_array_push(ctx->requests, req);
+            }
+			// Figure this out...
+            else if (!tab_bar)
+            {
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_CNT_MOVE;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+            }
+        }
+
+        // Tab view
+        int32_t tw = title_max_size;
+        id = gs_gui_get_id(ctx, "!split_tab", 10);
+        const float hp = 0.8f;
+        tr.x += split_size;
+        float h = tr.h * hp;
+        float y = tr.y + tr.h * (1.f - hp); 
+
+        // Will update tab bar rect size with parent window rect
+        if (tab_item)
+        {
+            // Get tab bar
+            gs_gui_rect_t* r = &tab_bar->rect;
+
+            // Determine width
+            int32_t tab_width = gs_min(r->w / (float)tab_bar->size, title_max_size); 
+            tw = tab_item->zindex ? tab_width : tab_width + 1.f; 
+
+            // Determine position (based on zindex and total width)
+            float xoff = 0.f; //tab_item->zindex ? 2.f : 0.f;  
+            tr.x = tab_bar->rect.x + tab_width * tab_item->zindex + xoff; 
+        }
+
+        gs_gui_rect_t r = gs_gui_rect(tr.x + split_size, y, tw, h); 
+
+        gs_gui_update_control(ctx, id, r, opt); 
+
+        // Need to move the entire thing
+        if ((id == ctx->hover || id == ctx->focus) && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+        { 
+            gs_gui_set_focus(ctx, id); 
+            ctx->next_focus_root = cnt; 
+
+            // Don't move from tab bar
+            if (tab_item)
+            { 
+                // Handle break out
+                if (ctx->mouse_pos.y < tr.y || ctx->mouse_pos.y > tr.y + tr.h)
+                { 
+                    ctx->undock_root = cnt;
+                } 
+
+                if (tab_bar->focus != tab_item)
+                {
+                    gs_gui_request_t req = gs_default_val();
+                    req.type = GS_GUI_CNT_FOCUS;
+                    req.cnt = cnt;
+                    gs_dyn_array_push(ctx->requests, req);
+                }
+
+                /*
+                req.type = GS_GUI_CNT_MOVE;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+                */
+            } 
+
+            else if (root_split)
+            {
+                // Handle break out
+                if (ctx->mouse_pos.y < tr.y || ctx->mouse_pos.y > tr.y + tr.h)
+                { 
+                    ctx->undock_root = cnt;
+                } 
+            }
+            else
+            {
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_CNT_MOVE;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+            }
+        }
+    } 
+
+    // Control frame for body movement
+    if (
+        ~opt & GS_GUI_OPT_NOMOVE && 
+        ~opt & GS_GUI_OPT_NOINTERACT && 
+        ~opt & GS_GUI_OPT_NOHOVER && 
+        new_frame && 
+        cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE
+    )
+    {
+        // Cache rect
+		gs_gui_rect_t br = cnt->rect;
+
+        if (~opt & GS_GUI_OPT_NOTITLE) 
+        {
+            br.y += ctx->style->title_height;
+            br.h -= ctx->style->title_height;
+        }
+        gs_gui_id id = gs_gui_get_id(ctx, "!body", 5);
+        gs_gui_update_control(ctx, id, br, opt); 
+
+        // Need to move the entire thing
+        if ((id == ctx->focus) && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+        {
+            ctx->next_focus_root = cnt; 
+            if (root_split)
+            {
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_SPLIT_MOVE;
+                req.split = root_split;
+                gs_dyn_array_push(ctx->requests, req);
+            }
+            else if (tab_bar) 
+            { 
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_CNT_FOCUS;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+
+                req.type = GS_GUI_CNT_MOVE;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+            } 
+            else
+            {
+                gs_gui_request_t req = gs_default_val();
+                req.type = GS_GUI_CNT_MOVE;
+                req.cnt = cnt;
+                gs_dyn_array_push(ctx->requests, req);
+            }
+        }
+    }
+
+
+    // Get parent window if in tab view, then set rect to it (will be a frame off though...)
+    if (tab_item && tab_bar)
+    {
+        if (tab_bar->focus == tab_item || split) 
+        {
+            tab_bar->rect = cnt->rect;
+        }
+        else
+        {
+            cnt->rect = tab_bar->rect;
+        }
+    }
 
     // Cache body 
     body = cnt->rect; 
@@ -3013,16 +3759,17 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
         body.h -= tr.h; 
     }
 
-	/* draw frame */
-	if (~opt & GS_GUI_OPT_NOFRAME) 
+    // if (~opt & GS_GUI_OPT_NOCLIP && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE)
+    if (~opt & GS_GUI_OPT_NOCLIP && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE)
     {
-		ctx->draw_frame(ctx, cnt->rect, GS_GUI_COLOR_WINDOWBG);
-	}
+        gs_gui_push_clip_rect(ctx, cnt->rect);
+    } 
 
-    if (~opt & GS_GUI_OPT_NOCLIP)
+	/* draw frame */
+	if (~opt & GS_GUI_OPT_NOFRAME && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE) 
     {
-	    gs_gui_push_clip_rect(ctx, cnt->rect);
-    }
+		ctx->draw_frame(ctx, body, GS_GUI_COLOR_WINDOWBG);
+	}
 
 	// do title bar
 	if (~opt & GS_GUI_OPT_NOTITLE) 
@@ -3032,30 +3779,96 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
         if (split)
         {
             const float sh = split_size * 0.5f; 
-            tr.x += sh;
-            tr.w -= split_size;
+            // tr.x += sh;
+            // tr.w -= split_size;
             tr.y += sh;
         }
-		ctx->draw_frame(ctx, tr, GS_GUI_COLOR_TITLEBG);
+
+        // Don't draw this unless you're the bottom window in a tab group
+        if (tab_bar)
+        {
+            bool lowest = true;
+            for (uint32_t i = 0; i < tab_bar->size; ++i)
+            { 
+                if (cnt->zindex > ((gs_gui_container_t*)(tab_bar->items[i].data))->zindex) 
+                {
+                    lowest = false;
+                    break;
+                }
+            }
+            if (lowest) ctx->draw_frame(ctx, tr, GS_GUI_COLOR_TITLEBG);
+        }
+
+        else
+        {
+            ctx->draw_frame(ctx, tr, GS_GUI_COLOR_TITLEBG);
+        }
 
         // Draw tab control
         { 
-            int32_t tw = ctx->text_width(ctx->style->font, title, -1);
-			gs_gui_id id = gs_gui_get_id(ctx, "!split_tab", 10);
+
+            // Tab view
+            int32_t tw = title_max_size;
+            id = gs_gui_get_id(ctx, "!split_tab", 10);
             const float hp = 0.8f;
             tr.x += split_size;
             float h = tr.h * hp;
-            float y = tr.y + tr.h * (1.f - hp);
-			gs_gui_rect_t r = gs_gui_rect(tr.x + split_size, y, tw + 15.f, h);
+            float y = tr.y + tr.h * (1.f - hp); 
+
+            // Will update tab bar rect size with parent window rect
+            if (tab_item)
+            {
+                // Get tab bar
+                gs_gui_rect_t* r = &tab_bar->rect;
+
+                // Determine width
+                int32_t tab_width = gs_min(r->w / (float)tab_bar->size, title_max_size); 
+                tw = tab_width - 2.f;
+
+                // Determine position (based on zindex and total width)
+                float xoff = 0.f; //tab_item->zindex ? 2.f : 0.f;  
+                tr.x = tab_bar->rect.x + tab_width * tab_item->zindex + xoff;
+            }
+
+			gs_gui_rect_t r = gs_gui_rect(tr.x + split_size, y, tw, h);
+
+            bool hovered = false;
+
+            if (in_root && gs_gui_rect_overlaps_vec2(r, ctx->mouse_pos))
+            {
+                gs_immediate_draw_t* dl = &ctx->overlay_draw_list;
+                gsi_rectvd(dl, gs_v2(r.x, r.y), gs_v2(r.w, r.h), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_WHITE, GS_GRAPHICS_PRIMITIVE_LINES);
+                hovered = true;
+            }
+
+            if (hovered && ctx->mouse_down == GS_GUI_MOUSE_LEFT)
+            { 
+                gs_gui_set_focus(ctx, id);
+
+                if (tab_item && tab_bar->focus != tab_item)
+                { 
+                    gs_gui_request_t req = gs_default_val();
+                    req.type = GS_GUI_CNT_FOCUS;
+                    req.cnt = cnt;
+                    gs_dyn_array_push(ctx->requests, req);
+                } 
+            }
+
             gs_color_t def = gs_color(50, 50, 50, 255);
             gs_color_t hov = gs_color(70, 70, 70, 255);
-            gs_color_t act = gs_color(90, 90, 90, 255);
-            gs_gui_draw_rect(ctx, r, id == ctx->focus ? act : id == ctx->hover ? hov : def);
-        }
+            gs_color_t act = GS_COLOR_GREEN; // gs_color(90, 90, 90, 255); 
 
-        gs_gui_draw_control_text(ctx, title, tr, GS_GUI_COLOR_TITLETEXT, opt); 
+            gs_gui_push_clip_rect(ctx, r);
+
+            gs_gui_draw_rect(ctx, r, id == ctx->focus ? act : hovered ? hov : def);
+
+            gs_gui_draw_control_text(ctx, title, tr, GS_GUI_COLOR_TITLETEXT, opt); 
+
+            gs_gui_pop_clip_rect(ctx); 
+        } 
 
 		// do `close` button
+        /*
 		if (~opt & GS_GUI_OPT_NOCLOSE && false) 
         {
 			gs_gui_id id = gs_gui_get_id(ctx, "!close", 6);
@@ -3068,6 +3881,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 				cnt->open = 0;
 			}
 		} 
+        */
 	} 
 
 	// resize to content size
@@ -3078,34 +3892,38 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 		cnt->rect.h = cnt->content_size.y + (cnt->rect.h - r.h);
 	} 
 
-    if (~opt & GS_GUI_OPT_NOCLIP)
+    if (~opt & GS_GUI_OPT_NOCLIP && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE)
     {
         gs_gui_pop_clip_rect(ctx); 
     }
 
-    gs_gui_push_container_body(ctx, cnt, body, opt); 
+    { 
+        gs_gui_push_container_body(ctx, cnt, body, opt); 
 
-	// do `resize` handles (sides of rect)
-	if (~opt & GS_GUI_OPT_NORESIZE) 
-    {
-		int32_t sz = ctx->style->title_height;
-		gs_gui_id id = gs_gui_get_id(ctx, "!resize", 7);
-		gs_gui_rect_t r = gs_gui_rect(cnt->rect.x + cnt->rect.w - sz, cnt->rect.y + cnt->rect.h - sz, sz, sz);
-		gs_gui_update_control(ctx, id, r, opt);
-		if (id == ctx->focus && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
-        { 
-            if (root_split)
-            {
-                ctx->split_request.type = GS_GUI_SPLIT_RESIZE_SE;
-                ctx->split_request.split = root_split;
+        // do `resize` handles (sides of rect)
+        if (~opt & GS_GUI_OPT_NORESIZE && new_frame) 
+        {
+            int32_t sz = ctx->style->title_height;
+            gs_gui_id id = gs_gui_get_id(ctx, "!resize", 7);
+            gs_gui_rect_t r = gs_gui_rect(cnt->rect.x + cnt->rect.w - sz, cnt->rect.y + cnt->rect.h - sz, sz, sz);
+            gs_gui_update_control(ctx, id, r, opt);
+            if (id == ctx->focus && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
+            { 
+                if (root_split)
+                {
+                    gs_gui_request_t req = gs_default_val();
+                    req.type = GS_GUI_SPLIT_RESIZE_SE;
+                    req.split = root_split;
+                    gs_dyn_array_push(ctx->requests, req);
+                }
+                else
+                {
+                    cnt->rect.w = gs_max(96, cnt->rect.w + ctx->mouse_delta.x);
+                    cnt->rect.h = gs_max(64, cnt->rect.h + ctx->mouse_delta.y);
+                }
             }
-            else
-            {
-                cnt->rect.w = gs_max(96, cnt->rect.w + ctx->mouse_delta.x);
-                cnt->rect.h = gs_max(64, cnt->rect.h + ctx->mouse_delta.y);
-            }
-		}
-	} 
+        } 
+    }
 
 	/* close if this is a popup window and elsewhere was clicked */
 	if (opt & GS_GUI_OPT_POPUP && ctx->mouse_pressed && ctx->hover_root != cnt) 
@@ -3115,7 +3933,14 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
     if (~opt & GS_GUI_OPT_NOCLIP)
     {
-	    gs_gui_push_clip_rect(ctx, cnt->body);
+        if (cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE)
+        {
+	        gs_gui_push_clip_rect(ctx, cnt->body);
+        }
+        else 
+        {
+	        gs_gui_push_clip_rect(ctx, gs_gui_rect(0, 0, 0, 0));
+        }
     }
 
 	return GS_GUI_RES_ACTIVE;
@@ -3125,19 +3950,342 @@ GS_API_DECL void gs_gui_end_window(gs_gui_context_t *ctx)
 { 
     gs_gui_container_t* cnt = gs_gui_get_current_container(ctx); 
 
+    gs_gui_split_t* split = gs_gui_get_split(ctx, cnt);
+    gs_gui_split_t* root_split = gs_gui_get_root_split(ctx, cnt); 
+
+    const bool new_frame = cnt->frame != ctx->frame;
+
+    // Cache opt
+    const int32_t opt = cnt->opt; 
+
+    // Pop clip for rect
     if (~cnt->opt & GS_GUI_OPT_NOCLIP) 
     {
 	    gs_gui_pop_clip_rect(ctx); 
     } 
 
+    #define _gui_window_resize_ctrl(ID, RECT, MOUSE, SPLIT_TYPE, MOD_KEY, ...)\
+        do {\
+            if (ctx->key_down == (MOD_KEY))\
+            {\
+                gs_gui_id _ID = (ID);\
+                gs_gui_rect_t _R = (RECT);\
+                gs_gui_update_control(ctx, (ID), _R, opt);\
+        \
+                if (_ID == ctx->hover|| _ID == ctx->focus)\
+                {\
+                    gs_gui_draw_rect(ctx, _R, GS_COLOR_WHITE);\
+                }\
+        \
+                if (_ID == ctx->focus && ctx->mouse_down == (MOUSE))\
+                {\
+                    gs_gui_draw_rect(ctx, _R, GS_COLOR_WHITE);\
+                    if (root_split)\
+                    {\
+                        gs_gui_request_t req = gs_default_val();\
+                        req.type = (SPLIT_TYPE);\
+                        req.split = root_split;\
+                        gs_dyn_array_push(ctx->requests, req);\
+                    }\
+                    else if (new_frame)\
+                    {\
+                        __VA_ARGS__\
+                    }\
+                }\
+            }\
+        } while (0)\
+
+    // Control frame for body resize
+    if (~opt & GS_GUI_OPT_NORESIZE && cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE)
+    { 
+        // Cache main rect
+        gs_gui_rect_t* r = root_split ? &root_split->rect : &cnt->rect;
+        gs_gui_rect_t* cr = &cnt->rect;
+
+        const float border_ratio = 0.333f;
+
+        if (split) 
+        {
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_w", 8), 
+                gs_gui_rect(cr->x, cr->y + cr->h * border_ratio, cr->w * border_ratio, cr->h * (1.f - 2.f * border_ratio)), 
+                GS_GUI_MOUSE_RIGHT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_e", 8), 
+                gs_gui_rect(cr->x + cr->w * (1.f - border_ratio), cr->y + cr->h * border_ratio, cr->w * border_ratio, cr->h * (1.f - 2.f * border_ratio)), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_n", 8), 
+                gs_gui_rect(cr->x + cr->w * border_ratio, cr->y, cr->w * (1.f - 2.f * border_ratio), cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_s", 8), 
+                gs_gui_rect(cr->x + cr->w * border_ratio, cr->y + cr->h * (1.f - border_ratio), cr->w * (1.f - 2.f * border_ratio), cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_se", 9), 
+                gs_gui_rect(cr->x + cr->w - cr->w * border_ratio, cr->y + cr->h * (1.f - border_ratio), cr->w * border_ratio, cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_ne", 9), 
+                gs_gui_rect(cr->x + cr->w - cr->w * border_ratio, cr->y, cr->w * border_ratio, cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_nw", 9), 
+                gs_gui_rect(cr->x, cr->y, cr->w * border_ratio, cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+
+            _gui_window_resize_ctrl(
+                gs_gui_get_id(ctx, "!split_sw", 9), 
+                gs_gui_rect(cr->x, cr->y + cr->h - cr->h * border_ratio, cr->w * border_ratio, cr->h * border_ratio), 
+                GS_GUI_MOUSE_LEFT,
+                GS_GUI_SPLIT_RESIZE_INVALID, 
+                GS_GUI_KEY_CTRL,
+                { 
+                }); 
+        } 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_w", 6), 
+            gs_gui_rect(r->x, r->y + r->h * border_ratio, r->w * border_ratio, r->h * (1.f - 2.f * border_ratio)), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_W, 
+            GS_GUI_KEY_ALT,
+            { 
+                float w = r->w;
+                float max_x = r->x + r->w;
+                r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                if (fabsf(r->w - w) > 0.f)
+                {
+                    r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                }
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_e", 6), 
+            gs_gui_rect(r->x + r->w * (1.f - border_ratio), r->y + r->h * border_ratio, r->w * border_ratio, r->h * (1.f - 2.f * border_ratio)), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_E, 
+            GS_GUI_KEY_ALT,
+            { 
+                r->w = gs_max(r->w + ctx->mouse_delta.x, 40);
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_n", 6), 
+            gs_gui_rect(r->x + r->w * border_ratio, r->y, r->w * (1.f - 2.f * border_ratio), r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_N, 
+            GS_GUI_KEY_ALT,
+            { 
+                float h = r->h;
+                float max_y = h + r->y;
+                r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                if (fabsf(r->h - h) > 0.f)
+                {
+                    r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                }
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_s", 6), 
+            gs_gui_rect(r->x + r->w * border_ratio, r->y + r->h * (1.f - border_ratio), r->w * (1.f - 2.f * border_ratio), r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_S, 
+            GS_GUI_KEY_ALT,
+            { 
+                r->h = gs_max(r->h + ctx->mouse_delta.y, 40);
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_se", 7), 
+            gs_gui_rect(r->x + r->w - r->w * border_ratio, r->y + r->h * (1.f - border_ratio), r->w * border_ratio, r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_SE, 
+            GS_GUI_KEY_ALT,
+            { 
+                r->w = gs_max(r->w + ctx->mouse_delta.x, 40);
+                r->h = gs_max(r->h + ctx->mouse_delta.y, 40);
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_ne", 7), 
+            gs_gui_rect(r->x + r->w - r->w * border_ratio, r->y, r->w * border_ratio, r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_NE, 
+            GS_GUI_KEY_ALT,
+            { 
+                r->w = gs_max(r->w + ctx->mouse_delta.x, 40); 
+                float h = r->h;
+                float max_y = h + r->y;
+                r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                if (fabsf(r->h - h) > 0.f)
+                {
+                    r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                }
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_nw", 7), 
+            gs_gui_rect(r->x, r->y, r->w * border_ratio, r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_NW, 
+            GS_GUI_KEY_ALT,
+            { 
+                float h = r->h;
+                float max_y = h + r->y;
+                r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                if (fabsf(r->h - h) > 0.f)
+                {
+                    r->y = gs_min(r->y + ctx->mouse_delta.y, max_y);
+                }
+
+                float w = r->w;
+                float max_x = r->x + r->w;
+                r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                if (fabsf(r->w - w) > 0.f)
+                {
+                    r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                }
+            }); 
+
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_sw", 7), 
+            gs_gui_rect(r->x, r->y + r->h - r->h * border_ratio, r->w * border_ratio, r->h * border_ratio), 
+            GS_GUI_MOUSE_LEFT,
+            GS_GUI_SPLIT_RESIZE_SW, 
+            GS_GUI_KEY_ALT,
+            { 
+                float h = r->h;
+                float max_y = h + r->y;
+                r->h = gs_max(r->h + ctx->mouse_delta.y, 40); 
+
+                float w = r->w;
+                float max_x = r->x + r->w;
+                r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                if (fabsf(r->w - w) > 0.f)
+                {
+                    r->x = gs_min(r->x + ctx->mouse_delta.x, max_x);
+                }
+            }); 
+
+        static bool capture = false;
+        static gs_vec2 mp = {0};
+        static gs_gui_rect_t _rect = {0};
+
+        /*
+        _gui_window_resize_ctrl(
+            gs_gui_get_id(ctx, "!res_c", 5), 
+            gs_gui_rect(r->x + r->w * border_ratio, r->y + r->h * border_ratio, r->w * border_ratio, r->h * border_ratio), 
+            GS_GUI_SPLIT_RESIZE_CENTER, 
+            { 
+                if (!capture)
+                {
+                    capture = true;
+                    mp = ctx->mouse_pos;
+                    _rect = *r;
+                }
+
+                // Grow based on dist from center 
+                gs_vec2 c = gs_v2(r->x + r->w * 0.5f, r->y + r->h * 0.5f); 
+                gs_vec2 a = gs_vec2_sub(c, mp); 
+                gs_vec2 b = gs_vec2_sub(c, ctx->mouse_pos); 
+                gs_vec2 na = gs_vec2_norm(a);
+                gs_vec2 nb = gs_vec2_norm(b);
+                float dist = gs_vec2_len(gs_vec2_sub(b, a)); 
+                float dot = gs_vec2_dot(na, nb);
+                gs_println("len: %.2f, dot: %.2f", dist, dot);
+
+                // Grow rect by dot product (scale dimensions) 
+                float sign = dot >= 0.f ? 1.f : -1.f;
+                float factor = 1.f - dist / 1000.f;
+                r->w = _rect.w * factor * sign; 
+                r->h = _rect.h * factor * sign; 
+
+                // Equidistant resize from middle (grow rect based on delta)
+                float h = r->h;
+                float max_y = h + r->y;
+                r->h = gs_max(r->h - ctx->mouse_delta.y, 40); 
+                if (fabsf(r->h - h) > 0.f)
+                {
+                    r->y = gs_min(r->y - ctx->mouse_delta.y, max_y);
+                }
+
+                float w = r->w;
+                float max_x = r->x + r->w;
+                r->w = gs_max(r->w - ctx->mouse_delta.x, 40); 
+                if (fabsf(r->w - w) > 0.f)
+                {
+                    r->x = gs_min(r->x - ctx->mouse_delta.x, max_x);
+                }
+            }); 
+        */
+
+        if (ctx->mouse_down != GS_GUI_MOUSE_LEFT)
+        {
+            capture = false;
+            mp = gs_v2s(0.f);
+        } 
+    }
+
+    // Determine if focus root in same tab group as current window for docking
+    bool can_dock = true;
+    if (cnt->tab_item)
+    {
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar);
+        for (uint32_t t = 0; t < tab_bar->size; ++t)
+        {
+            if (tab_bar->items[t].data == ctx->focus_root) 
+            {
+                can_dock == false;
+            }
+        }
+    }
+
     // Do docking overlay (if enabled) 
     if (
+        can_dock && 
         ~cnt->opt & GS_GUI_OPT_NODOCK &&
         ctx->focus_root && 
         ctx->focus_root != cnt &&  
-        gs_gui_rect_overlaps_vec2(cnt->rect, ctx->mouse_pos) &&     // This is the incorrect part - need to check if this container isn't being overlapped by another
+        gs_gui_rect_overlaps_vec2(cnt->rect, ctx->mouse_pos) && // This is the incorrect part - need to check if this container isn't being overlapped by another
         ctx->mouse_down == GS_GUI_MOUSE_LEFT && 
-		~cnt->opt & GS_GUI_OPT_NOHOVER) 
+		~cnt->opt & GS_GUI_OPT_NOHOVER && 
+        cnt->flags & GS_GUI_WINDOW_FLAGS_VISIBLE) 
     { 
         gs_gui_split_t* focus_split = gs_gui_get_root_split(ctx, ctx->focus_root);
         gs_gui_split_t* cnt_split   = gs_gui_get_root_split(ctx, cnt); 
@@ -3149,6 +4297,9 @@ GS_API_DECL void gs_gui_end_window(gs_gui_context_t *ctx)
             ctx->dockable_root = ctx->dockable_root && cnt->zindex > ctx->dockable_root->zindex ? cnt : ctx->dockable_root? ctx->dockable_root : cnt;
         } 
     } 
+
+    // Set current frame
+    cnt->frame = ctx->frame;
 
     // Pop root container
 	gs_gui_end_root_container(ctx); 
