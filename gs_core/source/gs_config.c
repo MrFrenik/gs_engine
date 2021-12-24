@@ -46,6 +46,9 @@
 #define GS_IMMEDIATE_DRAW_IMPL
 #include <gs/util/gs_idraw.h> 
 
+#define GS_GUI_IMPL
+#include <gs/util/gs_gui.h>" 
+
 #define GS_GFXT_IMPL
 #include <gs/util/gs_gfxt.h>
 
@@ -54,9 +57,6 @@
 
 #define GS_PHYSICS_IMPL
 #include <gs/util/gs_physics.h> 
-
-#define GS_GUI_IMPL
-#include "gs_gui.h" 
 
 #define GS_OBJECT_IMPL
 #include "gs_object.h"
