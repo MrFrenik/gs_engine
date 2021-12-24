@@ -416,7 +416,7 @@ GS_API_DECL void gs_editor_update()
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT  3
+#define WIN_CNT  10
 
 /*
 #if DO_IMGUI
@@ -594,6 +594,16 @@ GS_API_DECL void gs_editor_update()
             static char BUF[256] = {0};
             if (gs_gui_textbox(gsgui, BUF, 256))
             {
+            }
+
+            if (gs_gui_button(gsgui, "Swap Left"))
+            {
+                gs_gui_tab_item_swap(gsgui, gs_gui_get_current_container(gsgui), -1);
+            }
+
+            if (gs_gui_button(gsgui, "Swap Right"))
+            {
+                gs_gui_tab_item_swap(gsgui, gs_gui_get_current_container(gsgui), +1);
             }
 
             for (uint32_t j = 0; j < 20; ++j)

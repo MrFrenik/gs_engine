@@ -56,6 +56,7 @@
 #define GS_GUI_CONTAINERPOOL_SIZE	GS_GUI_MAX_CNT
 #define GS_GUI_TREENODEPOOL_SIZE	GS_GUI_MAX_CNT
 #define GS_GUI_GS_GUI_SPLIT_SIZE	GS_GUI_MAX_CNT
+#define GS_GUI_GS_GUI_TAB_SIZE		GS_GUI_MAX_CNT
 #define GS_GUI_MAX_WIDTHS			16
 #define GS_GUI_REAL					float
 #define GS_GUI_REAL_FMT				"%.3g"
@@ -250,6 +251,7 @@ typedef struct gs_gui_tab_item_t
     gs_gui_id tab_bar;
     uint32_t zindex;        // Sorting index in tab bar
     void* data;             // User set data pointer for this item
+	uint32_t idx;			// Internal index
 } gs_gui_tab_item_t; 
 
 typedef struct gs_gui_tab_bar_t
@@ -257,7 +259,7 @@ typedef struct gs_gui_tab_bar_t
     gs_gui_tab_item_t items[GS_GUI_TAB_ITEM_MAX];
     uint32_t size;                                  // Current number of items in tab bar
     gs_gui_rect_t rect;                             // Cached sized for tab bar
-    gs_gui_tab_item_t* focus;                       // Focused item in tab bar
+    uint32_t focus;									// Focused item in tab bar
 } gs_gui_tab_bar_t; 
 
 typedef struct gs_gui_container_t 
@@ -271,12 +273,14 @@ typedef struct gs_gui_container_t
 	int32_t open;
 	gs_gui_id id;
     gs_gui_id split;                    // If container is docked, then will have owning split to get sizing (0x00 for NULL)
-    gs_gui_tab_item_t* tab_item;        // NOTE(john): I hate it, but until windows have their own draw lists and can do continued drawing later in the frame, this will have to do
+    uint32_t tab_bar;
+    uint32_t tab_item;
     struct gs_gui_container_t* parent;  // Owning parent (for tabbing)
 	int32_t opt;
     uint32_t frame;
     uint32_t visible;
     int32_t flags;
+	char name[256];
 } gs_gui_container_t;
 
 typedef struct gs_gui_style_t
@@ -308,7 +312,9 @@ typedef enum gs_gui_request_type
     GS_GUI_SPLIT_RESIZE_S,
     GS_GUI_SPLIT_RESIZE_CENTER,
     GS_GUI_SPLIT_RATIO,
-    GS_GUI_SPLIT_RESIZE_INVALID
+    GS_GUI_SPLIT_RESIZE_INVALID,
+	GS_GUI_TAB_SWAP_LEFT,
+	GS_GUI_TAB_SWAP_RIGHT 
 } gs_gui_request_type;
 
 typedef struct gs_gui_request_t
@@ -420,6 +426,7 @@ GS_API_DECL void gs_gui_bring_to_front(gs_gui_context_t *ctx, gs_gui_container_t
 GS_API_DECL void gs_gui_bring_split_to_front(gs_gui_context_t* ctx, gs_gui_split_t* split); 
 GS_API_DECL gs_gui_split_t* gs_gui_get_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt);
 GS_API_DECL gs_gui_tab_bar_t* gs_gui_get_tab_bar(gs_gui_context_t* ctx, gs_gui_container_t* cnt);
+GS_API_DECL void gs_gui_tab_item_swap(gs_gui_context_t* ctx, gs_gui_container_t* cnt, int32_t direction);
 
 GS_API_DECL int32_t gs_gui_pool_init(gs_gui_context_t *ctx, gs_gui_pool_item_t *items, int32_t len, gs_gui_id id);
 GS_API_DECL int32_t gs_gui_pool_get(gs_gui_context_t *ctx, gs_gui_pool_item_t *items, int32_t len, gs_gui_id id);
@@ -740,10 +747,15 @@ static gs_gui_split_t* gs_gui_get_root_split(gs_gui_context_t* ctx, gs_gui_conta
     else return NULL;
 } 
 
+GS_API_DECL gs_gui_tab_bar_t* gs_gui_get_tab_bar(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
+{
+    return ((cnt->tab_bar && cnt->tab_bar< gs_slot_array_size(ctx->tab_bars)) ? gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar) : NULL);
+} 
+
 GS_API_DECL gs_gui_split_t* gs_gui_get_split(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
 {
-    gs_gui_tab_item_t* tab_item = cnt->tab_item ? cnt->tab_item : NULL;
-    gs_gui_tab_bar_t* tab_bar = tab_item ? gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar) : NULL; 
+	gs_gui_tab_bar_t* tab_bar = gs_gui_get_tab_bar(ctx, cnt);
+    gs_gui_tab_item_t* tab_item = tab_bar ? &tab_bar->items[cnt->tab_item] : NULL;
     gs_gui_split_t* split = cnt->split ? gs_slot_array_getp(ctx->splits, cnt->split) : NULL;
 
     // Look at split if in tab group
@@ -760,11 +772,6 @@ GS_API_DECL gs_gui_split_t* gs_gui_get_split(gs_gui_context_t* ctx, gs_gui_conta
 
     return split;
 } 
-
-GS_API_DECL gs_gui_tab_bar_t* gs_gui_get_tab_bar(gs_gui_context_t* ctx, gs_gui_container_t* cnt)
-{
-    return (cnt->tab_item ? gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar) : NULL);
-}
 
 static gs_gui_command_t* gs_gui_push_jump(gs_gui_context_t* ctx, gs_gui_command_t* dst) 
 {
@@ -1034,44 +1041,47 @@ GS_API_DECL void gs_gui_dock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* c
     if (split_type == GS_GUI_SPLIT_TAB)
     { 
         // If the parent window has a tab bar, then need to get that tab bar item and add it 
-        if (parent->tab_item)
+        if (parent->tab_bar)
         {
             gs_println("add to tab bar");
 
-            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, parent->tab_item->tab_bar);
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, parent->tab_bar);
             gs_assert(tab_bar); 
               
             // Set all tab bar children to this as well, if has children, then release previous tab bar
-            if (child->tab_item)
+            if (child->tab_bar)
             {
-                uint32_t tbid = child->tab_item->tab_bar;
-                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_item->tab_bar); 
+                uint32_t tbid = child->tab_bar;
+                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_bar); 
                 for (uint32_t i = 0; i < ctb->size; ++i)
                 {
                     gs_gui_tab_item_t* cti = &tab_bar->items[tab_bar->size]; 
                     gs_gui_container_t* c = (gs_gui_container_t*)ctb->items[i].data; 
-                    cti->tab_bar = parent->tab_item->tab_bar;
+                    cti->tab_bar = parent->tab_bar;
                     cti->zindex = tab_bar->size++;
+					cti->idx = cti->zindex;
                     cti->data = c;
-                    c->tab_item = cti;
+                    c->tab_item = cti->idx;
                     c->parent = parent;
                 }
 
                 // Free other tab bar
-                gs_slot_array_erase(ctx->tab_bars, tbid);
+                // gs_slot_array_erase(ctx->tab_bars, tbid);
             }
 			else
 			{
 				gs_gui_tab_item_t* tab_item = &tab_bar->items[tab_bar->size];
-				tab_item->tab_bar = parent->tab_item->tab_bar;
+				tab_item->tab_bar = parent->tab_bar;
 				tab_item->zindex = tab_bar->size++;
-				tab_bar->focus = tab_item; 
-				child->tab_item = tab_item; 
+				tab_item->idx = tab_item->zindex;
+				tab_bar->focus = tab_bar->size - 1;
+				child->tab_item = tab_item->idx; 
 			}
 
+            tab_bar->items[child->tab_item].data = child;
             child->rect = parent->rect;
-            child->tab_item->data = child;
             child->parent = parent; 
+            child->tab_bar = parent->tab_bar;
         }
         // Otherwise, create new tab bar
         else
@@ -1090,45 +1100,60 @@ GS_API_DECL void gs_gui_dock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t* c
             parent_tab_item->tab_bar = hndl;
 
             // Set parent tab item
-            parent->tab_item = parent_tab_item;
-            parent->tab_item->data = parent; 
+            parent->tab_item = 0;
+            parent_tab_item->data = parent; 
 
-            uint32_t tbid = child->tab_item ? child->tab_item->tab_bar : 0;
+            uint32_t tbid = child->tab_bar;
 
             // Set all tab bar children to this as well, if has children, then release previous tab bar
-            if (child->tab_item)
+            if (child->tab_bar)
             {
-                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_item->tab_bar); 
+                gs_gui_tab_bar_t* ctb = gs_slot_array_getp(ctx->tab_bars, child->tab_bar); 
                 for (uint32_t i = 0; i < ctb->size; ++i)
                 {
                     gs_gui_tab_item_t* cti = &tab_bar->items[tab_bar->size]; 
                     gs_gui_container_t* c = (gs_gui_container_t*)ctb->items[i].data; 
                     cti->tab_bar = hndl;
                     cti->zindex = tab_bar->size++;
+					cti->idx = cti->zindex;
                     cti->data = c;
-                    c->tab_item = cti;
+                    c->tab_item = cti->idx;
                     c->parent = parent;
+                    c->tab_bar = hndl;
                 }
 
                 // TODO(john): This erase is causing a crash.
-                gs_slot_array_erase(ctx->tab_bars, tbid);
+                // gs_slot_array_erase(ctx->tab_bars, tbid);
             }
 			else
 			{
 				gs_gui_tab_item_t* child_tab_item = &tab_bar->items[tab_bar->size];
 				child_tab_item->zindex = tab_bar->size++; 
+				child_tab_item->idx = child_tab_item->zindex;
 				child_tab_item->tab_bar = hndl; 
 
 				// Set child tab item
-				child->tab_item = child_tab_item; 
-				child->tab_item->data = child;
+				child->tab_item = child_tab_item->idx; 
+				child_tab_item->data = child;
 			}
 
-			tab_bar->focus = child->tab_item;
+			tab_bar->focus = 1;
             child->rect = parent->rect; 
             child->parent = parent;
             tab_bar->rect = parent->rect;
 
+			parent->tab_bar = hndl;
+			child->tab_bar = hndl;
+
+            // Bring everything to front...right?
+
+        }
+
+        gs_gui_split_t* root_split = gs_gui_get_root_split(ctx, parent);
+        if (root_split)
+        {
+            gs_gui_update_split(ctx, root_split); 
+            gs_gui_bring_split_to_front(ctx, root_split);
         }
     }
     else
@@ -1257,7 +1282,7 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
     // Get parent split of this owning split
     gs_gui_split_t* ps = split && split->parent ? gs_slot_array_getp(ctx->splits, split->parent) : NULL;
 
-    if (cnt->tab_item)
+    if (cnt->tab_bar)
     {
         // Get parent container for this container
         gs_gui_container_t* parent = gs_gui_get_parent(ctx, cnt);
@@ -1266,8 +1291,8 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
         if (parent->split)
         {
             // No split, so just do stuff normally...
-            gs_gui_tab_item_t* tab_item = cnt->tab_item;
-            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar);
+            gs_gui_tab_item_t* tab_item = &tab_bar->items[cnt->tab_item];
 
             if (tab_bar->size > 2)
             {
@@ -1282,35 +1307,34 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                     }
                 } 
 
-                // Swap and pop with end
-                *tab_item = tab_bar->items[tab_bar->size - 1];
+				// Swap all the way down the chain
+				for (uint32_t i = idx; i < tab_bar->size; ++i)
+				{
+					gs_gui_tab_item_swap(ctx, tab_bar->items[i].data, +1);
+				} 
 
                 // Swap windows as well
-                ((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
-
-                // Set size
-                tab_bar->size--;
-
-                for (uint32_t i = 0; i < tab_bar->size; ++i)
-                {
-                    tab_bar->items[i].zindex = i;
-                } 
+                ((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item->idx; 
 
                 // Set focus to first window
-                tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx]; 
-
-                // Set parent for other containers
-                for (uint32_t i = 0; i < tab_bar->size; ++i)
-                {
-                    gs_gui_container_t* c = tab_bar->items[i].data;
-                    c->parent = tab_bar->focus->data;
-                }
+				tab_bar->focus = idx ? idx - 1 : idx;
+                gs_assert(tab_bar->items[tab_bar->focus].data != cnt); 
 
                 // Set split for focus
                 if (parent == cnt)
                 {
-                    gs_gui_container_t* fcnt = tab_bar->focus->data;
+					// Set parent for other containers (assuming parent was removed)
+					for (uint32_t i = 0; i < tab_bar->size; ++i)
+					{ 
+						gs_gui_container_t* c = tab_bar->items[i].data;
+						c->parent = tab_bar->items[tab_bar->focus].data;
+                        tab_bar->items[i].idx = i;
+                        tab_bar->items[i].zindex = i;
+					}
+
+                    gs_gui_container_t* fcnt = tab_bar->items[tab_bar->focus].data;
                     fcnt->split = parent->split;
+                    fcnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
 
                     // Fix up split reference
                     split = gs_slot_array_getp(ctx->splits, fcnt->split);
@@ -1323,6 +1347,9 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                         split->children[1].container = fcnt;
                     }
                 }
+
+                // Set size
+                tab_bar->size--; 
             }
             // Destroy tab
             else
@@ -1340,25 +1367,18 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                     }
                 } 
 
-                // Swap and pop with end
-                *tab_item = tab_bar->items[tab_bar->size - 1];
-
-                // Swap windows as well
-                ((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
-
-                // Set size
-                tab_bar->size--;
-
-                for (uint32_t i = 0; i < tab_bar->size; ++i)
-                {
-                    tab_bar->items[i].zindex = i;
-                } 
+				// Swap all the way down the chain
+				for (uint32_t i = idx; i < tab_bar->size; ++i)
+				{
+					gs_gui_tab_item_swap(ctx, tab_bar->items[i].data, +1);
+				} 
 
                 for (uint32_t i = 0; i < tab_bar->size; ++i)
                 {
                     gs_gui_container_t* fcnt = tab_bar->items[i].data;
                     fcnt->rect = tab_bar->rect; 
-                    fcnt->tab_item = NULL;
+                    fcnt->tab_item = 0x00;
+                    fcnt->tab_bar = 0x00;
                     fcnt->parent = NULL;
                     fcnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
                 }
@@ -1366,32 +1386,31 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                 // Fix up split reference
                 if (parent == cnt)
                 { 
-                    tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx];
+					tab_bar->focus = idx ? idx - 1 : idx;
 
-                    gs_assert(tab_bar->focus->data != cnt);
+                    gs_assert(tab_bar->items[tab_bar->focus].data != cnt);
 
-                    gs_gui_container_t* fcnt = tab_bar->focus->data;
+                    gs_gui_container_t* fcnt = tab_bar->items[tab_bar->focus].data;
                     fcnt->split = parent->split;
 
                     // Fix up split reference
                     split = gs_slot_array_getp(ctx->splits, fcnt->split);
                     if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container == parent)
                     {
-                        split->children[0].type = GS_GUI_SPLIT_NODE_CONTAINER;
                         split->children[0].container = fcnt;
                     }
                     else
                     {
-                        split->children[1].type = GS_GUI_SPLIT_NODE_CONTAINER;
                         split->children[1].container = fcnt;
                     } 
                 } 
 
-                gs_slot_array_erase(ctx->tab_bars, tbid);
+                // gs_slot_array_erase(ctx->tab_bars, tbid);
             }
 
             // Remove tab index from container
-            cnt->tab_item = NULL;
+            cnt->tab_item = 0x00;
+            cnt->tab_bar = 0x00;
             // Remove parent
             cnt->parent = NULL;
             // Set split to 0
@@ -1403,8 +1422,8 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
         else
         {
             // No split, so just do stuff normally...
-            gs_gui_tab_item_t* tab_item = cnt->tab_item;
-            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar);
+            gs_gui_tab_item_t* tab_item = &tab_bar->items[cnt->tab_item];
 
             // Set next available window to visible/focused and rearrange all tab item zindices
             if (tab_bar->size > 2)
@@ -1419,30 +1438,27 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
 					}
 				}
 
-                // Swap and pop with end
-                *tab_item = tab_bar->items[tab_bar->size - 1];
-
-				// Swap windows as well
-				((gs_gui_container_t*)(tab_item->data))->tab_item = tab_item;
+				// Swap all the way down the chain
+				for (uint32_t i = idx; i < tab_bar->size; ++i)
+				{
+					gs_gui_tab_item_swap(ctx, tab_bar->items[i].data, +1);
+				} 
 
                 // Set size
-                tab_bar->size--;
-
-                for (uint32_t i = 0; i < tab_bar->size; ++i)
-                {
-                    tab_bar->items[i].zindex = i;
-                }
+                tab_bar->size--; 
 
                 // Set focus to first window
-                tab_bar->focus = &tab_bar->items[idx ? idx - 1 : idx]; 
+                tab_bar->focus = idx ? idx - 1 : idx; 
 
                 // Set parent for other containers
-                for (uint32_t i = 0; i < tab_bar->size; ++i)
-                {
-                    gs_gui_container_t* c = tab_bar->items[i].data;
-                    c->parent = tab_bar->focus->data;
-                }
-
+				if (parent == cnt)
+				{
+					for (uint32_t i = 0; i < tab_bar->size; ++i)
+					{
+						gs_gui_container_t* c = tab_bar->items[i].data;
+						c->parent = tab_bar->items[tab_bar->focus].data;
+					} 
+				}
             }
             // Only 2 windows left in tab bar
             else
@@ -1451,7 +1467,8 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                 {
                     gs_gui_container_t* fcnt = tab_bar->items[i].data;
                     fcnt->rect = tab_bar->rect; 
-                    fcnt->tab_item = NULL;
+                    fcnt->tab_item = 0x00;
+                    fcnt->tab_bar = 0x00;
                     fcnt->parent = NULL;
                     fcnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
                 }
@@ -1459,11 +1476,12 @@ GS_API_DECL void gs_gui_undock_ex_cnt(gs_gui_context_t* ctx, gs_gui_container_t*
                 tab_bar->size = 0;
 
                 // Destroy tab bar, reset windows
-                gs_slot_array_erase(ctx->tab_bars, tab_item->tab_bar);
+                // gs_slot_array_erase(ctx->tab_bars, tab_item->tab_bar);
             } 
 
             // Remove tab index from container
-            cnt->tab_item = NULL;
+            cnt->tab_item = 0x00;
+            cnt->tab_bar = 0x00;
             // Remove parent
             cnt->parent = NULL;
 
@@ -1559,6 +1577,7 @@ GS_API_DECL void gs_gui_init(gs_gui_context_t *ctx, uint32_t window_hndl)
     gs_slot_array_reserve(ctx->splits, GS_GUI_GS_GUI_SPLIT_SIZE);
     gs_gui_split_t split = gs_default_val();
     gs_slot_array_insert(ctx->splits, split); // First item is set for 0x00 invalid
+    gs_slot_array_reserve(ctx->tab_bars, GS_GUI_GS_GUI_TAB_SIZE);
     gs_gui_tab_bar_t tb = gs_default_val();
     gs_slot_array_insert(ctx->tab_bars, tb);
 } 
@@ -1723,9 +1742,9 @@ static void gs_gui_get_split_lowest_zindex(gs_gui_context_t* ctx, gs_gui_split_t
     {
         *index = split->children[0].container->zindex; 
     }
-    if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container->tab_item)
+    if (split->children[0].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[0].container->tab_bar)
     {
-        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[0].container->tab_item->tab_bar); 
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[0].container->tab_bar); 
         for (uint32_t i = 0; i < tab_bar->size; ++i)
         {
             if (((gs_gui_container_t*)tab_bar->items[i].data)->zindex < *index) *index = ((gs_gui_container_t*)tab_bar->items[i].data)->zindex;
@@ -1736,9 +1755,9 @@ static void gs_gui_get_split_lowest_zindex(gs_gui_context_t* ctx, gs_gui_split_t
     {
         *index = split->children[1].container->zindex;
     }
-    if (split->children[1].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[1].container->tab_item)
+    if (split->children[1].type == GS_GUI_SPLIT_NODE_CONTAINER && split->children[1].container->tab_bar)
     {
-        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[1].container->tab_item->tab_bar); 
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, split->children[1].container->tab_bar); 
         for (uint32_t i = 0; i < tab_bar->size; ++i)
         {
             if (((gs_gui_container_t*)tab_bar->items[i].data)->zindex < *index) *index = ((gs_gui_container_t*)tab_bar->items[i].data)->zindex;
@@ -2041,10 +2060,10 @@ static void gs_gui_docking(gs_gui_context_t* ctx)
         int32_t hov_b = gs_gui_rect_overlaps_vec2(bottom, ctx->mouse_pos); 
 
         bool can_dock = true;
-        if (ctx->focus_root->tab_item)
+        if (ctx->focus_root->tab_bar)
         {
 			gs_gui_container_t* tcmp = ctx->dockable_root ? ctx->dockable_root : ctx->prev_dockable_root;
-            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, ctx->focus_root->tab_item->tab_bar);
+            gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, ctx->focus_root->tab_bar);
             for (uint32_t i = 0; i < tab_bar->size; ++i)
             {
 				gs_gui_container_t* tcnt = (gs_gui_container_t*)tab_bar->items[i].data;
@@ -2141,9 +2160,9 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
                     req->cnt->rect.x += ctx->mouse_delta.x;
                     req->cnt->rect.y += ctx->mouse_delta.y;
 
-                    if (req->cnt->tab_item)
+                    if (req->cnt->tab_bar)
                     {
-                        gs_gui_tab_bar_t* tb = gs_slot_array_getp(ctx->tab_bars, req->cnt->tab_item->tab_bar);
+                        gs_gui_tab_bar_t* tb = gs_slot_array_getp(ctx->tab_bars, req->cnt->tab_bar);
                         gs_assert(tb);
                         tb->rect.x += ctx->mouse_delta.x;
                         tb->rect.y += ctx->mouse_delta.y;
@@ -2160,20 +2179,20 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
 
                 gs_gui_split_t* rs = gs_gui_get_root_split(ctx, cnt);
 
-                if (cnt->tab_item)
+                if (cnt->tab_bar)
                 {
                     if (rs)
                     {
                         gs_gui_bring_split_to_front(ctx, rs);
                     }
 
-                    gs_gui_tab_item_t* tab_item = cnt->tab_item;
-                    gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar);
-                    gs_gui_container_t* fcnt = (gs_gui_container_t*)tab_bar->focus->data;
+                    gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar);
+                    gs_gui_tab_item_t* tab_item = &tab_bar->items[cnt->tab_item];
+                    gs_gui_container_t* fcnt = (gs_gui_container_t*)tab_bar->items[tab_bar->focus].data;
                     fcnt->opt |= GS_GUI_OPT_NOHOVER;
                     fcnt->opt |= GS_GUI_OPT_NOINTERACT; 
                     fcnt->flags &= ~GS_GUI_WINDOW_FLAGS_VISIBLE;
-                    tab_bar->focus = tab_item; 
+					tab_bar->focus = tab_item->idx;
                     cnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
 
                     // Bring all tab items to front
@@ -2359,6 +2378,16 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
                 gs_gui_bring_split_to_front(ctx, gs_gui_get_root_split_from_split(ctx, split));
 
             } break;
+
+			case GS_GUI_TAB_SWAP_LEFT:
+			{
+				gs_gui_tab_item_swap(ctx, req->cnt, -1);
+			} break;
+			
+			case GS_GUI_TAB_SWAP_RIGHT:
+			{
+				gs_gui_tab_item_swap(ctx, req->cnt, +1);
+			} break;
         } 
     }
 
@@ -2413,6 +2442,7 @@ GS_API_DECL void gs_gui_end(gs_gui_context_t *ctx)
     if (ctx->mouse_down != GS_GUI_MOUSE_LEFT)
     {
         gs_platform_set_cursor(ctx->window_hndl, GS_PLATFORM_CURSOR_ARROW);
+		ctx->focus = 0;
     }
 
 	// Sort root containers by zindex 
@@ -2596,9 +2626,9 @@ GS_API_DECL void gs_gui_bring_to_front(gs_gui_context_t* ctx, gs_gui_container_t
 	cnt->zindex = ++ctx->last_zindex;
 
     // If container is part of a tab item, then iterate and bring to front as well
-    if (cnt->tab_item)
+    if (cnt->tab_bar)
     {
-        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar);
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar);
         for (uint32_t i = 0; i < tab_bar->size; ++i)
         {
             ((gs_gui_container_t*)tab_bar->items[i].data)->zindex = ++ctx->last_zindex;
@@ -3411,11 +3441,38 @@ GS_API_DECL void gs_gui_end_treenode(gs_gui_context_t *ctx)
 	gs_gui_pop_id(ctx);
 } 
 
+// -1 for left, + 1 for right
+GS_API_DECL void gs_gui_tab_item_swap(gs_gui_context_t* ctx, gs_gui_container_t* cnt, int32_t direction)
+{
+    gs_gui_tab_bar_t* tab_bar = gs_gui_get_tab_bar(ctx, cnt);
+    if (!tab_bar) return; 
+	
+	int32_t item = (int32_t)cnt->tab_item;
+    int32_t idx = gs_clamp(item + direction, 0, (int32_t)tab_bar->size - 1);
+
+    gs_gui_container_t* scnt = tab_bar->items[idx].data;
+
+    gs_gui_tab_item_t* cti = &tab_bar->items[cnt->tab_item]; 
+    gs_gui_tab_item_t* sti = &tab_bar->items[idx];
+    gs_gui_tab_item_t tmp = *cti;
+
+    // Swap cti
+    sti->data = cnt;
+    cnt->tab_item = sti->idx; 
+
+    // Swap sti
+    cti->data = scnt;
+    scnt->tab_item = cti->idx; 
+
+    tab_bar->focus = sti->idx;
+}
+
 int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_rect_t rect, int32_t opt) 
 { 
 	gs_gui_rect_t body;
 	gs_gui_id id = gs_gui_get_id(ctx, title, strlen(title)); 
 	gs_gui_container_t* cnt = gs_gui_get_container_ex(ctx, id, opt);
+	memcpy(cnt->name, title, 256);
 
     const int32_t title_max_size = 100;
 
@@ -3436,8 +3493,8 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 	rect = body = cnt->rect;
 
     // If in a tab view, then title has to be handled differently...
-    gs_gui_tab_item_t* tab_item = cnt->tab_item ? cnt->tab_item : NULL;
-    gs_gui_tab_bar_t* tab_bar = tab_item ? gs_slot_array_getp(ctx->tab_bars, tab_item->tab_bar) : NULL; 
+    gs_gui_tab_bar_t* tab_bar = cnt->tab_bar ? gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar) : NULL; 
+    gs_gui_tab_item_t* tab_item = tab_bar ? &tab_bar->items[cnt->tab_item] : NULL;
 
     // Get splits
     gs_gui_split_t* split = gs_gui_get_split(ctx, cnt); 
@@ -3445,7 +3502,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
     if (tab_item && tab_item)
     {
-        if (tab_bar->focus == tab_item) 
+        if (tab_bar->focus == tab_item->idx) 
         {
             cnt->flags |= GS_GUI_WINDOW_FLAGS_VISIBLE;
             opt &= !GS_GUI_OPT_NOINTERACT; 
@@ -3566,8 +3623,8 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
         { 
             if (tab_bar)
             {
-                ctx->next_focus_root = (gs_gui_container_t*)(tab_bar->focus->data);
-                gs_gui_bring_to_front(ctx, tab_bar->focus->data);
+                ctx->next_focus_root = (gs_gui_container_t*)(tab_bar->items[tab_bar->focus].data);
+                gs_gui_bring_to_front(ctx, tab_bar->items[tab_bar->focus].data);
             }
             else
             {
@@ -3618,6 +3675,8 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
 
         gs_gui_update_control(ctx, id, r, opt); 
 
+        // If hovered over and have another tab, need to swap tab items
+
         // Need to move the entire thing
         if ((id == ctx->hover || id == ctx->focus) && ctx->mouse_down == GS_GUI_MOUSE_LEFT) 
         { 
@@ -3633,19 +3692,13 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
                     ctx->undock_root = cnt;
                 } 
 
-                if (tab_bar->focus != tab_item)
+                if (tab_bar->focus != tab_item->idx)
                 {
                     gs_gui_request_t req = gs_default_val();
                     req.type = GS_GUI_CNT_FOCUS;
                     req.cnt = cnt;
                     gs_dyn_array_push(ctx->requests, req);
-                }
-
-                /*
-                req.type = GS_GUI_CNT_MOVE;
-                req.cnt = cnt;
-                gs_dyn_array_push(ctx->requests, req);
-                */
+                } 
             } 
 
             else if (root_split)
@@ -3722,7 +3775,7 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
     // Get parent window if in tab view, then set rect to it (will be a frame off though...)
     if (tab_item && tab_bar)
     {
-        if (tab_bar->focus == tab_item || split) 
+        if (tab_bar->focus == tab_item->idx || split) 
         {
             tab_bar->rect = cnt->rect;
         }
@@ -3841,11 +3894,25 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
                 hovered = true;
             }
 
-            if (hovered && ctx->mouse_down == GS_GUI_MOUSE_LEFT)
-            { 
-                gs_gui_set_focus(ctx, id);
+			bool other_root_active = ctx->focus_root != cnt;
+			if (tab_bar)
+			{
+				for (uint32_t i = 0; i < tab_bar->size; ++i)
+				{
+					if (tab_bar->items[i].data == ctx->focus_root)
+					{ 
+						other_root_active = false;
+					}
+				}
+			}
 
-                if (tab_item && tab_bar->focus != tab_item)
+            if (!other_root_active && hovered && ctx->mouse_down == GS_GUI_MOUSE_LEFT && !ctx->lock_focus)
+            { 
+				// This is an issue...
+                gs_gui_set_focus(ctx, id);
+				ctx->lock_focus = id;
+
+                if (tab_item && tab_bar->focus != tab_item->idx)
                 { 
                     gs_gui_request_t req = gs_default_val();
                     req.type = GS_GUI_CNT_FOCUS;
@@ -3853,6 +3920,24 @@ int32_t gs_gui_begin_window_ex(gs_gui_context_t* ctx, const char* title, gs_gui_
                     gs_dyn_array_push(ctx->requests, req);
                 } 
             }
+
+			if (!other_root_active && ctx->mouse_down == GS_GUI_MOUSE_LEFT && ctx->focus == id)
+			{
+				if (ctx->mouse_pos.x < r.x)
+				{ 
+					gs_gui_request_t req = gs_default_val();
+					req.type = GS_GUI_TAB_SWAP_LEFT;
+					req.cnt = cnt;
+					gs_dyn_array_push(ctx->requests, req);
+				}
+				if (ctx->mouse_pos.x > r.x + r.w)
+				{ 
+					gs_gui_request_t req = gs_default_val();
+					req.type = GS_GUI_TAB_SWAP_RIGHT;
+					req.cnt = cnt;
+					gs_dyn_array_push(ctx->requests, req);
+				}
+			}
 
             gs_color_t def = gs_color(50, 50, 50, 255);
             gs_color_t hov = gs_color(70, 70, 70, 255);
@@ -4264,9 +4349,9 @@ GS_API_DECL void gs_gui_end_window(gs_gui_context_t *ctx)
 
     // Determine if focus root in same tab group as current window for docking
     bool can_dock = true;
-    if (cnt->tab_item)
+    if (cnt->tab_bar)
     {
-        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_item->tab_bar);
+        gs_gui_tab_bar_t* tab_bar = gs_slot_array_getp(ctx->tab_bars, cnt->tab_bar);
         for (uint32_t t = 0; t < tab_bar->size; ++t)
         {
             if (tab_bar->items[t].data == ctx->focus_root) 
