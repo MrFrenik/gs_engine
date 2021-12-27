@@ -344,14 +344,23 @@ static void write_log(char* logbuf, const char* text, bool* updated) {
     *updated = 1;
 }
 
-static void log_window(gs_gui_context_t* ctx) {
+static void dockspace(gs_gui_context_t* ctx) 
+{
+    int32_t opt = GS_GUI_OPT_FORCESETRECT | GS_GUI_OPT_NOTITLE | GS_GUI_OPT_DOCKSPACE | GS_GUI_OPT_FULLSCREEN | GS_GUI_OPT_NOMOVE | GS_GUI_OPT_NOBRINGTOFRONT | GS_GUI_OPT_NOFOCUS | GS_GUI_OPT_NORESIZE;
+    gs_gui_begin_window_ex(ctx, "Dockspace", gs_gui_rect(350, 40, 600, 500), opt);
+    {
+        // Empty dockspace...
+    }
+    gs_gui_end_window(ctx);
+}
 
+static void log_window(gs_gui_context_t* ctx) 
+{ 
     static bool logbuf_updated = false;
     static char logbuf[64000] = {0};
 
-    if (gs_gui_begin_window(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200))) 
+    if (gs_gui_begin_window_ex(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200), GS_GUI_OPT_NOTITLE)) 
     { 
-        /*
         gs_gui_layout_row(ctx, 1, (int[]) { -1 }, -28);
         gs_gui_begin_panel(ctx, "Panel"); 
         gs_gui_container_t* panel  = gs_gui_get_current_container(ctx);
@@ -363,11 +372,10 @@ static void log_window(gs_gui_context_t* ctx) {
             logbuf_updated = 0;
         }
 
-        */
         // input textbox + submit button
         static char buf[1024];
         int submitted = 0;
-        // gs_gui_layout_row(ctx, 2, (int[]) { -70, -1 }, 0); 
+        gs_gui_layout_row(ctx, 2, (int[]) { -70, -1 }, 0); 
         if (gs_gui_textbox(ctx, buf, sizeof(buf)) & GS_GUI_RES_SUBMIT) {
             gs_gui_set_focus(ctx, ctx->last_id);
             submitted = 1;
@@ -416,7 +424,7 @@ GS_API_DECL void gs_editor_update()
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
 #define DO_IMGUI 0
-#define WIN_CNT  10
+#define WIN_CNT  3
 
 /*
 #if DO_IMGUI
@@ -572,6 +580,8 @@ GS_API_DECL void gs_editor_update()
     gs_gs_gui_render(gsmui, cb);
     */
 
+    dockspace(gsgui);
+
 	for ( uint32_t i = 0; i < WIN_CNT; ++i )
 	{ 
         double rx = gs_rand_gen(&app->rand);
@@ -596,16 +606,6 @@ GS_API_DECL void gs_editor_update()
             {
             }
 
-            if (gs_gui_button(gsgui, "Swap Left"))
-            {
-                gs_gui_tab_item_swap(gsgui, gs_gui_get_current_container(gsgui), -1);
-            }
-
-            if (gs_gui_button(gsgui, "Swap Right"))
-            {
-                gs_gui_tab_item_swap(gsgui, gs_gui_get_current_container(gsgui), +1);
-            }
-
             for (uint32_t j = 0; j < 20; ++j)
             {
                 gs_snprintfc(BTMP, 256, "Hello_%zu", j);
@@ -619,7 +619,7 @@ GS_API_DECL void gs_editor_update()
 		}
 	} 
 
-    log_window(gsgui);
+    // log_window(gsgui);
 
     gs_gui_end(gsgui);
 
