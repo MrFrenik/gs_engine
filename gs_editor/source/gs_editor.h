@@ -346,7 +346,7 @@ static void write_log(char* logbuf, const char* text, bool* updated) {
 
 static void dockspace(gs_gui_context_t* ctx) 
 {
-    int32_t opt = GS_GUI_OPT_FORCESETRECT | GS_GUI_OPT_NOTITLE | GS_GUI_OPT_DOCKSPACE | GS_GUI_OPT_FULLSCREEN | GS_GUI_OPT_NOMOVE | GS_GUI_OPT_NOBRINGTOFRONT | GS_GUI_OPT_NOFOCUS | GS_GUI_OPT_NORESIZE;
+    int32_t opt = GS_GUI_OPT_NOCLIP | GS_GUI_OPT_NOFRAME | GS_GUI_OPT_FORCESETRECT | GS_GUI_OPT_NOTITLE | GS_GUI_OPT_DOCKSPACE | GS_GUI_OPT_FULLSCREEN | GS_GUI_OPT_NOMOVE | GS_GUI_OPT_NOBRINGTOFRONT | GS_GUI_OPT_NOFOCUS | GS_GUI_OPT_NORESIZE;
     gs_gui_begin_window_ex(ctx, "Dockspace", gs_gui_rect(350, 40, 600, 500), opt);
     {
         // Empty dockspace...
@@ -359,7 +359,7 @@ static void log_window(gs_gui_context_t* ctx)
     static bool logbuf_updated = false;
     static char logbuf[64000] = {0};
 
-    if (gs_gui_begin_window_ex(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200), GS_GUI_OPT_NOTITLE)) 
+    if (gs_gui_begin_window_ex(ctx, "Log Window", gs_gui_rect(350, 40, 300, 200), 0x00)) 
     { 
         gs_gui_layout_row(ctx, 1, (int[]) { -1 }, -28);
         gs_gui_begin_panel(ctx, "Panel"); 
@@ -414,172 +414,23 @@ GS_API_DECL void gs_editor_update()
     // Get texture
     gs_texture_t* tex = gs_asset_handle_get(&app->tex); 
 
+    // Get dimensions for text
+    gs_vec2 td = gs_asset_font_text_dimensions(gsi_default_font(), "Project: gs_editor", -1);
+    // Dimensions for texture
+    gs_vec2 ts = gs_v2(500.f, 500.f * 0.18f);
+
     // Render hello to screen
     gsi_camera2D(gsi);
-    gsi_text(gsi, 340.f, 300.f, "Project: gs_editor", NULL, false, 255, 255, 255, 255); 
+    gsi_text(gsi, (fb.x - td.x) * 0.5f, (fb.y - td.y) * 0.5f, "Project: gs_editor", NULL, false, 255, 255, 255, 255); 
     gsi_texture(gsi, tex->texture.hndl);
-    gsi_rectvd(gsi, gs_v2(150.f, 150.f), gs_v2(500.f, 500.f * 0.18f), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_WHITE, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
+    gsi_rectvd(gsi, gs_v2((fb.x - ts.x) * 0.5f, (fb.y - ts.y) * 0.5f - td.y - 50.f), ts, gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_WHITE, GS_GRAPHICS_PRIMITIVE_TRIANGLES);
 
     // Submit immediate draw render pass
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
-#define DO_IMGUI 0
-#define WIN_CNT  3
+#define WIN_CNT  4 
 
-/*
-#if DO_IMGUI
-
-    // New frame for imgui
-    gs_imgui_new_frame(gsimgui);
-
-    // Want to make a dockspace...
-#ifdef DO_IMGUI_DOCK
-    static bool opt_fullscreen = true;
-    static bool opt_padding = false;
-    static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
-
-    // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
-    // because it would be confusing to have two docking targets within each others.
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-    if (opt_fullscreen)
-    {
-        const ImGuiViewport* viewport = igGetMainViewport();
-        igSetNextWindowPos(viewport->WorkPos, 0, (ImVec2){0.f, 0.f});
-        igSetNextWindowSize(viewport->WorkSize, 0);
-        igSetNextWindowViewport(viewport->ID);
-        igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 0.0f);
-        igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-    }
-    else
-    {
-        dockspace_flags &= ~ImGuiDockNodeFlags_PassthruCentralNode;
-    }
-
-    // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background
-    // and handle the pass-thru hole, so we ask Begin() to not render a background.
-    if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
-        window_flags |= ImGuiWindowFlags_NoBackground;
-
-    // Important: note that we proceed even if Begin() returns false (aka window is collapsed).
-    // This is because we want to keep our DockSpace() active. If a DockSpace() is inactive,
-    // all active windows docked into it will lose their parent and become undocked.
-    // We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
-    // any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
-    if (!opt_padding)
-        igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0.0f, 0.0f});
-
-    ImGuiWindowClass cls = {
-        .ClassId = 0,
-        .ParentViewportId = -1,
-        .DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoSplit,
-        .DockingAllowUnclassed = true
-    };
-        igSetNextWindowClass(&cls);           // set next window class (control docking compatibility + provide hints to platform backend via custom viewport flags and platform parent/child relationship)
-
-    igBegin("DockSpace Demo", NULL, window_flags);
-    { 
-        if (!opt_padding)
-            igPopStyleVar(1);
-
-        if (opt_fullscreen)
-            igPopStyleVar(2);
-
-        // Submit the DockSpace
-        ImGuiIO* io = igGetIO();
-        if (io->ConfigFlags & ImGuiConfigFlags_DockingEnable)
-        {
-            ImGuiID dockspace_id = igGetID_Str("MyDockSpace");
-            igDockSpace(dockspace_id, (ImVec2){0.0f, 0.0f}, dockspace_flags, NULL);
-        } 
-
-        if (igBeginMenuBar())
-        { 
-            // Iterate through all gui menu options in this context, then draw
-            for (
-                gs_hash_table_iter it = gs_hash_table_iter_new(gsimgui->menus);
-                gs_hash_table_iter_valid(gsimgui->menus, it);
-                gs_hash_table_iter_advance(gsimgui->menus, it)
-            )
-            {
-                gs_imgui_menu_t* menu = gs_hash_table_iter_getp(gsimgui->menus, it);
-                if (igBeginMenu(menu->name, true)) 
-                {
-                    for (
-                        gs_hash_table_iter mit = gs_hash_table_iter_new(menu->items);
-                        gs_hash_table_iter_valid(menu->items, mit);
-                        gs_hash_table_iter_advance(menu->items, mit)
-                    )
-                    {
-                        gs_imgui_callback_desc_t* cb = gs_hash_table_iter_getp(menu->items, mit);
-                        gs_assert(cb); gs_assert(cb->cb); 
-                        cb->cb(cb->user_data);
-                    }
-                    igEndMenu();
-                }
-            }
-
-            igEndMenuBar();
-        }
-    } 
-    igEnd(); 
-
-    // Iterate through all gui windows in this context, then draw
-    for (
-        gs_hash_table_iter it = gs_hash_table_iter_new(gsimgui->windows);
-        gs_hash_table_iter_valid(gsimgui->windows, it);
-        gs_hash_table_iter_advance(gsimgui->windows, it)
-    )
-    { 
-        gs_imgui_callback_desc_t* cb = gs_hash_table_iter_getp(gsimgui->windows, it);
-        gs_assert(cb); gs_assert(cb->cb);
-        cb->cb(cb->user_data);
-    }
-#endif
-
-    for (uint32_t i = 0; i < WIN_CNT; ++i)
-    { 
-        gs_snprintfc(TMP, 256, "Test_%zu", i); 
-        igSetNextWindowPos((ImVec2){100.f + i * 10.f}, 0, (ImVec2){0.f, 0.f});
-        igSetNextWindowSize((ImVec2){200.f, 300.f}, 0);
-        igBegin(TMP, NULL, 0x00);
-        igEnd(); 
-    }
-
-    // Imgui render
-    gs_imgui_render(gsimgui, cb, NULL);
-
-#else
-    for (uint32_t i = 0; i < WIN_CNT; ++i)
-    {
-        gs_snprintfc(TMP, 256, "Test_%zu", i);
-        // Gui code
-        gs_gui_window_set_next_position(gsgui, gs_v2s(100.f + i * 10.f));
-        gs_gui_window_set_next_size(gsgui, gs_v2(200.f, 300.f));
-        if (gs_gui_window_begin(gsgui, TMP))
-        { 
-        }
-        gs_gui_window_end(gsgui); 
-    } 
-
-    // Render
-    gs_gui_render(gsgui, cb, NULL); 
-#endif
-*/ 
-    /* do window */
-    /*
-    if (gs_gui_begin_window(&gsmui->mu, "Demo Window", gs_gui_rect(40, 40, 300, 450))) 
-    {
-        gs_gui_Container *win = gs_gui_get_current_container(&gsmui->mu);
-        win->rect.w = gs_gui_max(win->rect.w, 240);
-        win->rect.h = gs_gui_max(win->rect.h, 300);
-        gs_gui_end_window(&gsmui->mu);
-    } 
-    
-    gs_gs_gui_render(gsmui, cb);
-    */
-
+    // Draw dockspace
     dockspace(gsgui);
 
 	for ( uint32_t i = 0; i < WIN_CNT; ++i )
@@ -619,7 +470,7 @@ GS_API_DECL void gs_editor_update()
 		}
 	} 
 
-    // log_window(gsgui);
+    log_window(gsgui);
 
     gs_gui_end(gsgui);
 
