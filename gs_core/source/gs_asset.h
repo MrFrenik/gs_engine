@@ -132,6 +132,8 @@ typedef struct gs_font_t
 
 } gs_font_t;
 
+GS_API_DECL bool gs_font_load_resource_from_file(const char* path, gs_asset_t* out, void* user_data);
+
 introspect()
 typedef struct gs_sound_t
 {
@@ -709,6 +711,14 @@ GS_API_DECL void gs_assets_init(gs_asset_manager_t* am, const char* path)
         .file_extensions_size = 2 * sizeof(char*),
         .file_extension = "msh"
     })); 
+
+	// Register font importer
+	gs_assets_register_importer(am, gs_font_t, (&(gs_asset_importer_desc_t) {
+		.load_resource_from_file = gs_font_load_resource_from_file, 
+		.file_extensions = {"ttf", "otf"},
+		.file_extensions_size = 2 * sizeof(char*),
+		.file_extension = "fnt"
+	}));
 
 	// Open directory
 	DIR* dir = opendir(path);
