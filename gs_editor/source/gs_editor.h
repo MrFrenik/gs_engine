@@ -185,6 +185,7 @@ typedef struct gs_editor_t
 
     // Your app data here...
     gs_asset_handle_t tex;
+    gs_asset_handle_t nine_tex;
     // gs_hash_table(uint64_t, gs_editor_view_data_t*) views; 
     gs_mt_rand_t rand; 
 	gs_asset_handle_t font;
@@ -237,7 +238,50 @@ typedef struct font_info
 {
     uint32_t point;
     const char* path;
-} font_info;
+} font_info; 
+
+typedef struct {
+    float time;
+    float max_time;
+    bool32 started;
+} anim_t;
+
+gs_hash_table(gs_gui_id, anim_t) anims = NULL;
+
+void gui_button_cb(struct gs_gui_context_t* ctx, gs_gui_rect_t r, gs_gui_id id, bool hovered, bool focused, int32_t opt, const char* label, int32_t icon)
+{
+    if (!anims || !gs_hash_table_key_exists(anims, id))
+    {
+        anim_t a = {
+            .time = 0.f,
+            .max_time = 1.f,
+            .started = true
+        };
+        gs_hash_table_insert(anims, id, a);
+    }
+
+    anim_t* anim = gs_hash_table_getp(anims, id); 
+    if (hovered && !focused)
+    {
+        if (!anim->started)
+        {
+            anim->started = true;
+            anim->time = 0.f;
+        } 
+        anim->time = sin(gs_platform_elapsed_time() * 0.01f) * 0.5f + 0.5f;
+        uint8_t v = (uint8_t)(anim->time * 255);
+        gs_color_t c = gs_color(v, v, v, 255);
+        gs_gui_draw_rect(ctx, r, c);
+    }
+    else
+    {
+        anim->started = false;
+        gs_gui_draw_rect(ctx, r, focused ? ctx->style->colors[GS_GUI_COLOR_BUTTONFOCUS] : ctx->style->colors[GS_GUI_COLOR_BUTTON]);
+    }
+
+    if (label) {gs_gui_draw_control_text(ctx, label, r, GS_GUI_COLOR_TEXT, opt);}
+    if (icon) {gs_gui_draw_icon(ctx, icon, r, ctx->style->colors[GS_GUI_COLOR_TEXT]);} 
+}
 
 GS_API_DECL void gs_editor_init()
 {
@@ -263,6 +307,7 @@ GS_API_DECL void gs_editor_init()
 
     // Import texture into asset manager 
     app->tex = gs_assets_import(&app->core->assets, "../../gs_core/assets/textures/logo.png", NULL, false); 
+    app->nine_tex = gs_assets_import(&app->core->assets, "9slice.png", NULL, false); 
     app->font = gs_assets_import(&app->core->assets, fonts[fi].path, &fonts[fi].point, false);
 
     /*
@@ -298,6 +343,9 @@ GS_API_DECL void gs_editor_init()
     */
 
     app->rand = gs_rand_seed((uint64_t)time(NULL));
+
+    // Add gui callback for button rendering
+    // app->core->gsgui.callbacks.button = gui_button_cb;
 } 
 
 /*
@@ -488,16 +536,35 @@ static void test_window(gs_gui_context_t *ctx)
 
         if (gs_gui_header_ex(ctx, "Shapes", 0x00)) 
         { 
+            gs_editor_t* app = gs_engine_user_data(gs_editor_t);
+            gs_texture_t* tex = gs_asset_handle_get(&app->tex); 
+            gs_texture_t* ntex = gs_asset_handle_get(&app->nine_tex); 
             gs_gui_container_t* cnt = gs_gui_get_current_container(ctx);
-            gs_gui_layout_row(ctx, 1, (int[]) { -1 }, 50);
+
+            gs_gui_layout_row(ctx, 1, (int[]) { -1 }, 400);
             gs_gui_begin_panel_ex(ctx, "!panel", GS_GUI_OPT_NOSCROLL); 
-            gs_gui_layout_row(ctx, 3, (int[]) { 20, 10, -1 }, 0);
-            gs_gui_rect_t next = gs_gui_layout_next(ctx); 
-            gs_gui_draw_circle(ctx, gs_v2(next.x + 10.f, next.y + 10.f), 10.f, GS_COLOR_RED);
-            next = gs_gui_layout_next(ctx); 
-            gs_gui_draw_triangle(ctx, gs_v2(next.x, next.y), gs_v2(next.x + 10.f, next.y + 10.f), gs_v2(next.x, next.y + 10.f), GS_COLOR_WHITE);
-            next = gs_gui_layout_next(ctx); 
-            gs_gui_draw_rect(ctx, gs_gui_rect(next.x, next.y, 10.f, 10.f), GS_COLOR_BLUE);
+            {
+                gs_gui_layout_row(ctx, 4, (int[]) { 20, 10, 10, -1 }, 0);
+
+                gs_gui_rect_t next = gs_gui_layout_next(ctx); 
+                gs_gui_draw_circle(ctx, gs_v2(next.x + 10.f, next.y + 10.f), 10.f, GS_COLOR_RED);
+
+                next = gs_gui_layout_next(ctx); 
+                gs_gui_draw_triangle(ctx, gs_v2(next.x, next.y), gs_v2(next.x + 10.f, next.y + 10.f), gs_v2(next.x, next.y + 10.f), GS_COLOR_WHITE);
+
+                next = gs_gui_layout_next(ctx); 
+                gs_gui_draw_rect(ctx, gs_gui_rect(next.x, next.y, 10.f, 10.f), GS_COLOR_BLUE);
+
+                next = gs_gui_layout_next(ctx); 
+                gs_gui_draw_image(ctx, tex->texture.hndl, gs_gui_rect(next.x, next.y, 200.f, 50.f), gs_v2s(0.f), gs_v2s(1.f), GS_COLOR_WHITE); 
+
+                next = gs_gui_layout_next(ctx); 
+                uint32_t w = 75, h = 83, m = 32, s = 200.f; 
+                float _t = sin(gs_platform_elapsed_time() * 0.001f) * 0.5f + 0.5f;
+                float rw = w + _t * (float)s;
+                float rh = h + _t * (float)s * 0.2f;
+                gs_gui_draw_nine_rect(ctx, ntex->texture.hndl, gs_gui_rect(next.x, next.y + 40.f, (uint32_t)rw, (uint32_t)rh), gs_v2s(0.f), gs_v2s(1.f), m, m, m, m, GS_COLOR_WHITE);
+            }
             gs_gui_end_panel(ctx);
         }
 
@@ -552,20 +619,22 @@ static int uint8_slider(gs_gui_context_t *ctx, unsigned char *value, int low, in
 static void style_window(gs_gui_context_t *ctx) 
 {
   static struct { const char *label; int idx; } colors[] = {
-    { "text:",         GS_GUI_COLOR_TEXT        },
-    { "border:",       GS_GUI_COLOR_BORDER      },
-    { "windowbg:",     GS_GUI_COLOR_WINDOWBG    },
-    { "titlebg:",      GS_GUI_COLOR_TITLEBG     },
-    { "titletext:",    GS_GUI_COLOR_TITLETEXT   },
-    { "panelbg:",      GS_GUI_COLOR_PANELBG     },
-    { "button:",       GS_GUI_COLOR_BUTTON      },
-    { "buttonhover:",  GS_GUI_COLOR_BUTTONHOVER },
-    { "buttonfocus:",  GS_GUI_COLOR_BUTTONFOCUS },
-    { "base:",         GS_GUI_COLOR_BASE        },
-    { "basehover:",    GS_GUI_COLOR_BASEHOVER   },
-    { "basefocus:",    GS_GUI_COLOR_BASEFOCUS   },
-    { "scrollbase:",   GS_GUI_COLOR_SCROLLBASE  },
-    { "scrollthumb:",  GS_GUI_COLOR_SCROLLTHUMB },
+    { "text:",         GS_GUI_COLOR_TEXT            },
+    { "text_inactive:",GS_GUI_COLOR_TEXT_INACTIVE   },
+    { "border:",       GS_GUI_COLOR_BORDER          },
+    { "shadow:",       GS_GUI_COLOR_SHADOW          },
+    { "windowbg:",     GS_GUI_COLOR_WINDOWBG        },
+    { "titlebg:",      GS_GUI_COLOR_TITLEBG         },
+    { "titletext:",    GS_GUI_COLOR_TITLETEXT       },
+    { "panelbg:",      GS_GUI_COLOR_PANELBG         },
+    { "button:",       GS_GUI_COLOR_BUTTON          },
+    { "buttonhover:",  GS_GUI_COLOR_BUTTONHOVER     },
+    { "buttonfocus:",  GS_GUI_COLOR_BUTTONFOCUS     },
+    { "base:",         GS_GUI_COLOR_BASE            },
+    { "basehover:",    GS_GUI_COLOR_BASEHOVER       },
+    { "basefocus:",    GS_GUI_COLOR_BASEFOCUS       },
+    { "scrollbase:",   GS_GUI_COLOR_SCROLLBASE      },
+    { "scrollthumb:",  GS_GUI_COLOR_SCROLLTHUMB     },
     { NULL }
   };
 
@@ -632,7 +701,7 @@ GS_API_DECL void gs_editor_update()
     // Submit immediate draw render pass
     gsi_render_pass_submit(gsi, cb, gs_color(10, 10, 10, 255)); 
 
-#define WIN_CNT  1
+#define WIN_CNT  10
 
     // Draw dockspace
     dockspace(gsgui);
